@@ -39,7 +39,7 @@
       }
 
       const pageMeta = {
-        dashboard: ['Good morning, Olivia', 'Here is what needs your attention today.'],
+        dashboard: ['Good morning', 'Here is what needs your attention today.'],
         calendar: ['Calendar', 'A clear view of the work ahead.'],
         meetings: ['Meetings', 'Conversations, decisions, and next steps.'],
         events: ['Events', 'Plan the moments that bring your teams together.'],
