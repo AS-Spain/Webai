@@ -219,7 +219,7 @@ const messages = {
   "Not connected": "Sin conexión",
   "Configure": "Configurar",
   "Configure credentials to enable this integration": "Integración pendiente de implementación y configuración",
-  "No external provider is active. Configure OAuth credentials and callback URLs before enabling a connection.": "No hay proveedores externos activos. Las integraciones requieren implementación OAuth y configuración segura.",
+  "No external provider is active. Configure OAuth credentials and callback URLs before enabling a connection.": "Estas integraciones de calendario y mensajería no están activas. Requieren implementación OAuth y configuración segura.",
   "Data & access": "Datos y accesos",
   "Current environment details.": "Información del entorno actual.",
   "STORAGE": "ALMACENAMIENTO",
