@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import { SessionStore } from './sessions.js'
 
-export function registerAuthRoutes(app, db, demoMode, recordActivity) {
+export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap) {
   const sessions = new SessionStore(db)
   const loginAttempts = new Map()
   const sessionCookie = demoMode ? 'webai_v2_demo_session' : 'webai_v2_private_session'
@@ -46,7 +46,7 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity) {
 
   app.get('/api/setup/status', (req, res) => {
     const users = db.prepare('SELECT COUNT(*) AS count FROM users').get().count
-    res.json({ needsSetup: users === 0, bootstrapEnabled: !demoMode && Boolean(process.env.BOOTSTRAP_TOKEN), demoMode })
+    res.json({ needsSetup: users === 0, bootstrapEnabled: users === 0 && !demoMode && Boolean(process.env.BOOTSTRAP_TOKEN), demoMode })
   })
 
   app.post('/api/setup/bootstrap', (req, res) => {
@@ -80,6 +80,7 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity) {
 
     try {
       const user = createWorkspace()
+      bootstrap?.consume()
       process.env.BOOTSTRAP_TOKEN = ''
       const publicUser = establishSession(req, res, user)
       return res.status(201).json({ user: publicUser, company })

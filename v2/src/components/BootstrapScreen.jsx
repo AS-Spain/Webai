@@ -19,6 +19,7 @@ function BootstrapScreen({ onSubmit, error, enabled }) {
 
         <form className="auth-form" onSubmit={onSubmit}>
           <label> {t("One-time setup token")} <input name="bootstrapToken" type="password" autoComplete="off" required disabled={!enabled} />
+            <small>{t("Read the private bootstrap token file indicated in the server console, or ask your deployment administrator.")}</small>
           </label>
           <label> {t("Company name")} <input name="company" autoComplete="organization" required minLength="2" maxLength="100" disabled={!enabled} />
           </label>

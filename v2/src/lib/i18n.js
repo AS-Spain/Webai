@@ -44,6 +44,7 @@ const messages = {
   "Create your workspace": "Crea tu espacio de trabajo",
   "Set up the company and its first administrator. The admin account will be created only after this form is verified.": "Configura la empresa y su primer administrador. La cuenta se creará tras verificar este formulario.",
   "Bootstrap is locked. Set a one-time BOOTSTRAP_TOKEN of at least 32 characters in the server environment, then restart the app.": "La configuración está bloqueada. Define BOOTSTRAP_TOKEN con al menos 32 caracteres en el servidor y reinicia la aplicación.",
+  "Read the private bootstrap token file indicated in the server console, or ask your deployment administrator.": "Copia el token del archivo privado indicado en la consola del servidor, o solicítalo al administrador del despliegue.",
   "One-time setup token": "Token de configuración de un solo uso",
   "Company name": "Nombre de la empresa",
   "Administrator name": "Nombre del administrador",

@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { db, day, dayStart, demoMode } from './database.js'
 import { registerAuthRoutes } from './auth.js'
+import { prepareBootstrap } from './bootstrap.js'
 import { resourceConfig, resourceRoles, parseRow } from './resources.js'
 import { runtimeConfig } from './runtime.js'
 import { registerAiRoutes } from './ai.js'
@@ -30,7 +31,8 @@ const smtpTransport = !demoMode && process.env.SMTP_HOST ? nodemailer.createTran
   auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD || '' } : undefined,
 }) : null
 
-const { authenticate, sessions, userByEmail, validEmail, hashToken } = registerAuthRoutes(app, db, demoMode, recordActivity)
+const bootstrap = prepareBootstrap({ db, demo: demoMode, dbPath: runtime.dbPath })
+const { authenticate, sessions, userByEmail, validEmail, hashToken } = registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
 
 function authorizeResource(resource, action) {
   return (req, res, next) => {

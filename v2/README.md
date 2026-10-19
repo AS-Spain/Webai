@@ -67,12 +67,19 @@ En una terminal POSIX, desde `v2/`:
 ```sh
 export DEMO_MODE=false
 export V2_DB_PATH="./data/mi-espacio-v2.sqlite"
-export BOOTSTRAP_TOKEN="$(openssl rand -hex 32)"
 export APP_BASE_URL="http://localhost:5174"
 npm run dev
 ```
 
-El primer acceso solicita empresa, administrador, correo, contraseña y token de configuración. Comparte el token por un canal seguro: no lo añadas a URLs, logs ni al repositorio. Los usuarios de la versión original **no se importan automáticamente**; crea el administrador y nuevas invitaciones en esta base independiente.
+En el **primer arranque normal**, si la base aún no tiene usuarios, la aplicación genera automáticamente un `BOOTSTRAP_TOKEN` criptográfico de 256 bits. No necesitas OpenSSL ni definirlo a mano. Se guarda en `<ruta-de-la-base>.bootstrap-token.local`, con permisos `0600`, y la consola indica su ubicación **sin imprimir el secreto**. Con los valores predeterminados, desde la raíz del repositorio:
+
+```sh
+cat v2/data/webai-live.sqlite.bootstrap-token.local
+```
+
+Copia ese valor en el campo **Token de configuración de un solo uso**. El primer acceso solicita empresa, administrador, correo, contraseña y token de configuración. El token se conserva si reinicias antes de terminar el alta, y se elimina e invalida al crear el administrador. No se genera en la demo ni cuando ya existen usuarios. Si usas una base personalizada, cambia la ruta del comando anterior.
+
+Puedes seguir proporcionando `BOOTSTRAP_TOKEN` desde tu gestor de secretos (al menos 32 caracteres); tiene prioridad sobre la generación automática. Un valor explícito demasiado corto detiene el arranque, sin sustituirlo silenciosamente. La carpeta de la base debe ser escribible por el usuario del servidor. El archivo generado queda excluido de Git. Comparte el token por un canal seguro: no lo añadas a URLs, logs ni al repositorio. Los usuarios de la versión original **no se importan automáticamente**; crea el administrador y nuevas invitaciones en esta base independiente.
 
 No se cargan archivos `.env` automáticamente. Configura las variables en la terminal o en tu plataforma de despliegue.
 
