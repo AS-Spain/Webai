@@ -799,3 +799,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .assistant-mode-controls { padding: 0 16px 16px; }
 }
 .ai-context-caption { font-size: 11px; line-height: 1.6; color: var(--muted); margin-bottom: 16px; }
+.ai-local-guide { padding: 15px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; line-height: 1.8; color: var(--muted); }
+.ai-local-guide summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+.ai-local-guide ol { margin: 12px 0; padding-left: 22px; }
+.ai-local-guide a { color: var(--rust-dark); text-decoration: underline; }
+.ai-local-guide code { background: var(--paper); color: var(--ink); padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }

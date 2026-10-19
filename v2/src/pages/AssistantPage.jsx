@@ -53,7 +53,7 @@ function AssistantPage({ workspace, onCreate, onSetup }) {
       <section className="assistant-main panel">
         <div className="assistant-intro">
           <span className="assistant-orbit-icon"><Sparkles size={20} /></span>
-          <span className="panel-kicker"> {mode === 'ai' ? 'ASISTENTE · IA GENERATIVA' : 'ASISTENTE · REGLAS LOCALES'} </span>
+          <span className="panel-kicker"> {mode === 'ai' ? config?.local ? 'ASISTENTE · IA LOCAL' : 'ASISTENTE · IA GENERATIVA' : 'ASISTENTE · REGLAS LOCALES'} </span>
           <h2> {t("Ask a better")} <br /> {t("work question.")} </h2>
           <p> {t("Explore the project, task, and issue data currently loaded in this workspace.")} </p>
         </div>
@@ -62,10 +62,10 @@ function AssistantPage({ workspace, onCreate, onSetup }) {
           <fieldset disabled={pending || !config}>
             <legend>Cómo quieres consultar</legend>
             <label><input type="radio" name="assistant-mode" value="rules" checked={mode === 'rules'} onChange={() => { setMode('rules'); setError('') }} /> Reglas locales</label>
-            <label><input type="radio" name="assistant-mode" value="ai" checked={mode === 'ai'} disabled={!config?.configured || pending} onChange={() => { setMode('ai'); setError('') }} /> IA real {config?.configured ? `· ${config.model}` : '· sin configurar'}</label>
+            <label><input type="radio" name="assistant-mode" value="ai" checked={mode === 'ai'} disabled={!config?.configured || pending} onChange={() => { setMode('ai'); setError('') }} /> {config?.local ? 'IA local' : 'IA real'} {config?.configured ? `· ${config.model}` : '· sin configurar'}</label>
           </fieldset>
           {mode === 'ai' && <div className="assistant-ai-consent">
-            <p>Tu pregunta se enviará a {config?.providers.find((item) => item.id === config.provider)?.name}. Puede generar costes. Revisa la respuesta; la IA puede equivocarse.</p>
+            <p>Tu pregunta se enviará a {config?.providers.find((item) => item.id === config.provider)?.name}. {config?.local ? 'Se usa el servidor de modelos configurado por el administrador para todo el espacio.' : 'Puede generar costes de API.'} Revisa la respuesta; la IA puede equivocarse.</p>
             {config?.allowContext ? <label><input type="checkbox" checked={includeContext} disabled={pending} onChange={(event) => setIncludeContext(event.target.checked)} /> Adjuntar una muestra de contexto operativo del espacio (hasta 25 registros por tipo).</label> : <small>Contexto desactivado por el administrador. Solo se enviará tu pregunta.</small>}
           </div>}
         </div>
@@ -90,7 +90,7 @@ function AssistantPage({ workspace, onCreate, onSetup }) {
                 <div>
                   <strong>{answerInfo?.mode === 'ai' ? `${answerInfo.provider} · ${answerInfo.model}` : 'Asistente · reglas locales'}</strong>
                   <p>{answer}</p>
-                  <small> {answerInfo?.mode === 'ai' ? answerInfo.sharedContext ? 'IA generativa · muestra operativa limitada. Requiere revisión humana.' : 'IA generativa · sin contexto del espacio.' : 'Reglas locales sobre los registros de tu empresa; sin proveedor externo.'} </small>
+                  <small> {answerInfo?.mode === 'ai' ? answerInfo.sharedContext ? `${answerInfo.local ? 'IA local' : 'IA generativa'} · muestra operativa limitada. Requiere revisión humana.` : `${answerInfo.local ? 'IA local' : 'IA generativa'} · sin contexto del espacio.` : 'Reglas locales sobre los registros de tu empresa; sin proveedor externo.'} </small>
                 </div>
               </div>}
             </>
@@ -123,7 +123,7 @@ function AssistantPage({ workspace, onCreate, onSetup }) {
           <span><CircleHelp size={17} /></span>
           <div>
             <strong>{config?.configured ? `IA configurada · ${config.model}` : 'Conecta una IA en un minuto'}</strong>
-            <p>{config?.configured ? 'Elige IA real para enviar tu pregunta al proveedor, o reglas locales para no utilizar servicios externos. Ningún modo puede modificar registros.' : 'Un administrador puede elegir OpenAI, Groq u OpenRouter, añadir una clave y verificar la conexión. Mientras tanto, utiliza las reglas locales.'}</p>
+            <p>{config?.configured ? 'Elige IA real para enviar tu pregunta al proveedor, o reglas locales para no utilizar servicios externos. Ningún modo puede modificar registros.' : 'El administrador conecta Ollama, LM Studio u otra API compatible con OpenAI para todos. No necesitas una cuenta de OpenAI para usar modelos locales. Mientras tanto, utiliza las reglas locales.'}</p>
             <button className="text-action" onClick={onSetup}>{config?.configured ? 'Gestionar conexión' : 'Abrir configuración rápida'}<ArrowRight size={14} /></button>
           </div>
         </div>

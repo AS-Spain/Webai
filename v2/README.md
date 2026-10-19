@@ -55,31 +55,33 @@ El primer acceso solicita empresa, administrador, correo, contraseña y token de
 
 No se cargan archivos `.env` automáticamente. Configura las variables en la terminal o en tu plataforma de despliegue.
 
-## Conectar IA real · fast setup
+## Conectar IA local o de nube · fast setup
+
+**Solo el admin configura una conexión compartida y todos los usuarios del workspace usan ese mismo proveedor y modelo.** Si todavía no tienes modelos, sigue la [guía de instalación local con Ollama o LM Studio](LOCAL_AI.md).
 
 1. Entra como **administrador**. En la demo utiliza `ava@northstar.io` y la contraseña demo indicada arriba; la cuenta precargada Olivia es gestora y no puede cambiar claves.
 2. Abre **Configuración → Fast setup · IA real**.
-3. Elige **OpenAI**, **Groq** u **OpenRouter** e introduce una clave API de ese proveedor. No la compartas en chats, capturas ni en el repositorio.
-4. Conserva el modelo propuesto, escribe otro identificador o pulsa **Consultar modelos**. Los catálogos pueden contener modelos que no sean de chat: la prueba verificará la compatibilidad del elegido. La disponibilidad depende de tu cuenta y puede cambiar.
+3. Elige **Ollama · local**, **LM Studio · local** u **Otro servidor compatible con OpenAI**. En local normalmente no necesitas clave: indica la URL `/v1` de un servidor de modelos ya instalado y en marcha. También se conservan OpenAI, Groq y OpenRouter como opciones de nube con clave API. No compartas secretos en chats, capturas ni en el repositorio.
+4. Pulsa **Consultar modelos** para elegir uno instalado/disponible o escribe su identificador. Ollama propone `qwen2.5:3b`; LM Studio necesita el identificador del modelo que hayas cargado. Los catálogos pueden contener modelos que no sean de chat: la prueba verificará la compatibilidad del elegido. La disponibilidad depende de tu cuenta y puede cambiar.
 5. Decide si autorizas que los usuarios compartan contexto operativo. Por defecto está desactivado.
-6. Pulsa **Probar y activar**. El servidor envía una consulta mínima real al proveedor, sin datos de trabajo, y **solo guarda la configuración si responde correctamente**. Necesitas una cuenta con saldo/cuota; esta prueba puede tener coste.
-7. Abre el **Asistente del workspace** y selecciona **IA real**. El modo de reglas sigue disponible sin proveedor. La pregunta siempre se enviará al proveedor al usar IA; el contexto solo se adjunta si está autorizado y marcas expresamente su casilla.
+6. Pulsa **Probar y activar**. El servidor envía una consulta mínima real al proveedor, sin datos de trabajo, y **solo guarda la configuración si responde correctamente**. En local necesitas tener el motor y un modelo cargados; no necesitas una cuenta de OpenAI. En nube necesitas una cuenta con saldo/cuota y la prueba puede tener coste.
+7. Abre el **Asistente del workspace** y selecciona **IA local** o **IA real**, según la conexión compartida. El modo de reglas sigue disponible sin proveedor. La pregunta siempre se enviará al proveedor al usar IA; el contexto solo se adjunta si está autorizado y marcas expresamente su casilla.
 
 ### Seguridad y privacidad de IA
 
-- Las peticiones salen del servidor a destinos fijos: `api.openai.com`, `api.groq.com` o `openrouter.ai`, por HTTPS. El navegador llama únicamente a `/api/ai/...`. No se aceptan URLs arbitrarias, redirecciones ni proveedores personalizados.
+- Las peticiones salen del servidor Express a la API local `/v1` o a los destinos fijos de nube. El navegador llama únicamente a `/api/ai/...`. Se bloquean redirecciones y destinos arbitrarios: otros puertos, redes privadas y contenedores requieren `V2_AI_ALLOWED_ORIGINS`, autorizado por el operador. Consulta [LOCAL_AI.md](LOCAL_AI.md).
 - La clave API se introduce en un campo de contraseña y viaja al servidor. No se guarda en localStorage ni vuelve en las respuestas de la API. Se cifra con **AES-256-GCM**, asociado al tenant, antes de persistirla en SQLite.
-- Por defecto se crea `v2/data/ai-master.key`, de 32 bytes, con permisos `0600`. Persiste y respalda ese archivo **separadamente de SQLite**: perderlo impide descifrar las claves. `v2/data/` está excluido de Git.
+- Si guardas un token o clave se crea por defecto `v2/data/ai-master.key`, de 32 bytes, con permisos `0600`. Persiste y respalda ese archivo **separadamente de SQLite**: perderlo impide descifrar las claves. `v2/data/` está excluido de Git.
 - En producción puedes proporcionar `V2_AI_ENCRYPTION_KEY`, con 64 caracteres hexadecimales, desde tu gestor de secretos. Mantén el mismo valor al reiniciar. No cambies de clave/archivo sin un plan de recifrado o de reconfiguración; no hay rotación automática.
 - Con contexto se envía una muestra de **hasta 25 proyectos, 25 tareas y 25 incidencias**, con textos recortados a 200 caracteres. Se excluyen responsables, correos, descripciones, reuniones, notas, invitaciones y sesiones. Los títulos pueden contener información sensible: revisa el uso permitido y las políticas del proveedor antes de autorizarlo.
 - Los prompts y las respuestas no se persisten en el historial de la aplicación ni en la auditoría. El proveedor puede procesarlos o retenerlos según sus condiciones. La auditoría solo registra proveedor/modelo, autorización y desconexión.
 - Tanto la IA como las reglas son de **solo lectura**. No hay herramientas ni ejecución de acciones. Las respuestas generativas pueden equivocarse y requieren revisión humana.
-- Hay un límite persistido de **20 llamadas por usuario/empresa por minuto**, un timeout de 25 segundos y un máximo de 800 tokens de salida solicitados al proveedor. Los límites de gasto globales deben configurarse también en el proveedor.
+- Hay un límite persistido de **20 llamadas por usuario/empresa por minuto**, un timeout de 120 segundos en local o 25 segundos en nube y un máximo de 800 tokens de salida solicitados al proveedor. Los límites de gasto globales deben configurarse también en el proveedor.
 - **Desconectar** elimina la clave cifrada de la configuración activa de este espacio, no las claves de otras empresas. Las copias de seguridad existentes no se borran automáticamente.
 
 ### Estado de las pruebas de conectividad
 
-La integración hace llamadas HTTP reales a las APIs de los proveedores; no es una simulación en producción. Las pruebas automáticas usan respuestas controladas y no gastan créditos. **En el sandbox de Arena de esta sesión las conexiones salientes a estos proveedores no están permitidas**; para completar «Probar y activar», ejecuta la v2 en un entorno con acceso HTTPS al proveedor y usa tu propia clave. Si la red o la clave fallan, la interfaz muestra el error y no simula una respuesta de IA ni cambia de modo silenciosamente.
+La integración hace llamadas HTTP reales a las APIs compatibles; no es una simulación en producción. Las pruebas automáticas usan respuestas controladas y un servidor HTTP local de prueba; no gastan créditos ni ejecutan un LLM real. **No se ha instalado un motor de modelos en Arena, y las conexiones salientes a los proveedores de nube están bloqueadas en esta sesión.** Para usar IA local, ejecuta Ollama o LM Studio junto a la aplicación, o autoriza un servidor de modelos accesible. Para nube necesitas salida HTTPS al proveedor y tu propia clave. Si la red o la clave fallan, la interfaz muestra el error y no simula una respuesta de IA ni cambia de modo silenciosamente.
 
 ## Cambios implementados
 
@@ -101,7 +103,7 @@ Las pruebas usan bases temporales y no tocan ni la demo ni los datos de la versi
 - Paginación, filtros y búsqueda aislada por empresa.
 - Fechas locales, cambio de año y cambio de hora.
 - Respuestas del asistente en español y ausencia de modificaciones de datos.
-- Conectividad de los tres proveedores con respuestas controladas: cifrado, permisos, aislamiento, consentimiento, límites y errores sin filtrado de secretos.
+- Conectividad de los proveedores locales y de nube con respuestas controladas, servidor HTTP local de prueba y migración de configuraciones anteriores: cifrado, permisos, aislamiento, consentimiento, límites y errores sin filtrado de secretos.
 
 ### 2. Sesiones persistentes
 
@@ -126,7 +128,8 @@ server/
   sessions.js          # Almacén persistente de sesiones
   resources.js         # Configuración, roles y conversión de recursos
   pagination.js        # Validación de paginación
-  ai.js                # Proveedores reales, cifrado y contexto con consentimiento
+  ai.js                # Conexión compartida, cifrado y contexto con consentimiento
+  ai-providers.js      # Perfiles OpenAI-compatible y destinos autorizados
 ```
 
 ### 4. Español y fechas actualizadas
