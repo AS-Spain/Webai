@@ -44,9 +44,48 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
   }
 
+  app.use('/api/setup', (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store')
+    res.setHeader('Pragma', 'no-cache')
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow')
+    next()
+  })
+
   app.get('/api/setup/status', (req, res) => {
     const users = db.prepare('SELECT COUNT(*) AS count FROM users').get().count
-    res.json({ needsSetup: users === 0, bootstrapEnabled: users === 0 && !demoMode && Boolean(process.env.BOOTSTRAP_TOKEN), demoMode })
+    res.json({ needsSetup: users === 0, bootstrapEnabled: users === 0 && !demoMode && Boolean(process.env.BOOTSTRAP_TOKEN), autoTokenEnabled: users === 0 && !demoMode && process.env.V2_SETUP_AUTO_TOKEN !== 'false', demoMode })
+  })
+
+  const setupCookie = `${sessionCookie}_setup`
+  const setupDuration = 15 * 60 * 1000
+  app.post('/api/setup/claim', (req, res) => {
+    if (demoMode) return res.status(404).json({ error: 'La demo no tiene configuración privada.' })
+    if (process.env.V2_SETUP_AUTO_TOKEN === 'false') return res.status(403).json({ error: 'La carga automática está desactivada. Solicita el token al operador del despliegue.' })
+    if (!req.is('application/json')) return res.status(415).json({ error: 'La configuración requiere una solicitud JSON desde la aplicación.' })
+    const cookie = req.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${setupCookie}=`))?.slice(setupCookie.length + 1) || ''
+    const result = db.transaction(() => {
+      if (db.prepare('SELECT COUNT(*) AS count FROM users').get().count) return { closed: true }
+      if (!process.env.BOOTSTRAP_TOKEN) return { disabled: true }
+      const stored = db.prepare("SELECT value FROM deployment_metadata WHERE key = 'bootstrap_browser'").get()
+      const claim = stored ? JSON.parse(stored.value) : null
+      const now = Date.now()
+      if (claim && claim.expiresAt > now) {
+        if (hashToken(cookie) !== claim.hash) return { busy: true, retryAfter: Math.ceil((claim.expiresAt - now) / 1000) }
+        return { ticket: cookie, expiresAt: claim.expiresAt }
+      }
+      const ticket = randomBytes(32).toString('hex')
+      const expiresAt = now + setupDuration
+      db.prepare("INSERT OR REPLACE INTO deployment_metadata (key, value) VALUES ('bootstrap_browser', ?)").run(JSON.stringify({ hash: hashToken(ticket), expiresAt }))
+      return { ticket, expiresAt }
+    }).immediate()
+    if (result.closed) return res.status(409).json({ error: 'El administrador inicial ya fue creado.' })
+    if (result.disabled) return res.status(403).json({ error: 'La configuración inicial no está habilitada.' })
+    if (result.busy) {
+      res.setHeader('Retry-After', String(result.retryAfter))
+      return res.status(409).json({ error: 'Otro navegador ha reservado la configuración inicial. Usa ese navegador o recarga dentro de 15 minutos.' })
+    }
+    res.setHeader('Set-Cookie', `${setupCookie}=${result.ticket}; HttpOnly; Path=/; Max-Age=${Math.max(1, Math.floor((result.expiresAt - Date.now()) / 1000))}${cookieAttributes(req)}`)
+    return res.json({ bootstrapToken: process.env.BOOTSTRAP_TOKEN })
   })
 
   app.post('/api/setup/bootstrap', (req, res) => {
@@ -73,6 +112,7 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
       db.prepare(`INSERT INTO users (id, tenant_id, name, email, role, salt, password_hash)
         VALUES (?, ?, ?, ?, 'admin', ?, ?)`)
         .run(userId, tenantId, name, email, salt, passwordHash)
+      db.prepare("DELETE FROM deployment_metadata WHERE key = 'bootstrap_browser'").run()
       const user = { id: userId, tenant_id: tenantId, name, email, role: 'admin' }
       recordActivity(user, 'created', 'workspace', tenantId, `Creó el espacio de trabajo ${company} y el administrador inicial.`)
       return user
@@ -83,6 +123,7 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
       bootstrap?.consume()
       process.env.BOOTSTRAP_TOKEN = ''
       const publicUser = establishSession(req, res, user)
+      res.append('Set-Cookie', `${setupCookie}=; HttpOnly; Path=/; Max-Age=0${cookieAttributes(req)}`)
       return res.status(201).json({ user: publicUser, company })
     } catch (error) {
       if (error.message === 'BOOTSTRAP_ALREADY_USED') return res.status(409).json({ error: 'El administrador inicial ya fue creado.' })

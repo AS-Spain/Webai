@@ -50,6 +50,7 @@ test('demo separada: entrada sin contraseña, cookies bloqueadas y protección d
       assert.throws(() => runtimeConfig({ DEMO_MODE: 'true', V2_DB_PATH: normalFile, V2_DEMO_DB_PATH: normalFile }))
       assert.match(readFileSync(normalFile, 'utf8'), /MUST NOT BE OPENED/)
       assert.equal((await request('/setup/status')).body.demoMode, true)
+      assert.equal((await request('/setup/claim', { method: 'POST', body: {} })).status, 404)
     })
     await suite.test('entra como admin de prueba sin cookies ni contraseña', async () => {
       const result = await request('/auth/demo', { method: 'POST', body: { role: 'admin' } })

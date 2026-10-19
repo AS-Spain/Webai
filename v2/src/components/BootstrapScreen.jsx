@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, Compass, Copy, Eye, EyeOff, ShieldCheck } from 'lucide-react'
 
 function BootstrapScreen({ onSubmit, error, enabled, token, onTokenChange }) {
-  const [visible, setVisible] = useState(false)
+  const [visible, setVisible] = useState(true)
   const [copyMessage, setCopyMessage] = useState('')
   const tokenInput = useRef(null)
   const [copyRequest, setCopyRequest] = useState(0)
@@ -38,9 +38,9 @@ function BootstrapScreen({ onSubmit, error, enabled, token, onTokenChange }) {
         <form className="auth-form" onSubmit={onSubmit}>
           <section className="bootstrap-token-panel" aria-label="Tu token de configuración">
             <div className="bootstrap-token-heading"><ShieldCheck size={18} /><strong>Tu token de configuración</strong><span>UN SOLO USO</span></div>
-            <p>{token.length >= 32 ? 'Tu token ya está cargado. Puedes mostrarlo y copiarlo para guardarlo en tu gestor de contraseñas.' : 'Abre tu enlace privado de instalación para cargarlo aquí. Puedes verlo y copiarlo sin usar la terminal.'}</p>
+            <p>{token.length >= 32 ? 'Tu token aparece abajo con sus letras y números. Puedes copiarlo para guardarlo en tu gestor de contraseñas u ocultarlo.' : 'El token se carga automáticamente durante el primer inicio. Si otro navegador ha reservado la configuración, continúa allí o vuelve a intentarlo después.'}</p>
             <label htmlFor="bootstrap-token">{t("One-time setup token")}</label>
-            <input ref={tokenInput} id="bootstrap-token" name="bootstrapToken" type={visible ? 'text' : 'password'} value={token} onChange={(event) => { onTokenChange(event.target.value); setCopyMessage(''); setCopyRequest(0) }} autoComplete="off" autoCapitalize="none" spellCheck={false} minLength={32} required disabled={!enabled} placeholder="Se carga desde tu enlace privado" />
+            <input ref={tokenInput} id="bootstrap-token" name="bootstrapToken" type={visible ? 'text' : 'password'} value={token} onChange={(event) => { onTokenChange(event.target.value); setCopyMessage(''); setCopyRequest(0) }} autoComplete="off" autoCapitalize="none" spellCheck={false} minLength={32} required disabled={!enabled} placeholder="Token del primer inicio" />
             <div className="bootstrap-token-actions">
               <button type="button" className="button button-secondary" onClick={() => setVisible(!visible)} disabled={!enabled || !token} aria-pressed={visible}>{visible ? <EyeOff size={14} /> : <Eye size={14} />}{visible ? 'Ocultar token' : 'Mostrar token'}</button>
               <button type="button" className="button button-primary" onClick={copyToken} disabled={!enabled || token.length < 32}><Copy size={14} />Copiar token</button>
@@ -64,7 +64,7 @@ function BootstrapScreen({ onSubmit, error, enabled, token, onTokenChange }) {
           </button>
         </form>
 
-        <p className="auth-footnote"> {t("This setup link is not public. The operator must provide the one-time token out-of-band.")} </p>
+        <p className="auth-footnote">Completa el alta antes de compartir la web: el primer visitante puede crear el administrador. Esta pantalla desaparece después del alta.</p>
       </section>
     </main>
   )

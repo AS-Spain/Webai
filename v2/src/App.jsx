@@ -1,5 +1,5 @@
 import { t } from './lib/i18n.js'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { ArrowRight, Bell, CheckCircle2, ChevronDown, CircleHelp, Command, Compass, LogOut, Menu, Plus, Search, Settings2, ShieldAlert, Sparkles, Users, X } from 'lucide-react'
 import { navGroups, pageMeta, can } from './lib/config.js'
 import { formatDate, initials } from './lib/format.js'
@@ -10,6 +10,7 @@ import { useSearch } from './hooks/useSearch.js'
 import { useWorkspace } from './hooks/useWorkspace.js'
 import BootstrapScreen from './components/BootstrapScreen.jsx'
 import { readBootstrapFragment, scrubBootstrapFragment } from './lib/bootstrap-link.js'
+import { claimBootstrapToken } from './lib/bootstrap-claim.js'
 import ActivationScreen from './components/ActivationScreen.jsx'
 import LoginScreen from './components/LoginScreen.jsx'
 import Dashboard from './pages/Dashboard.jsx'
@@ -34,6 +35,7 @@ function App() {
   const [user, setUser] = useState(null)
   const [company, setCompany] = useState('Northstar Studio')
   const [booting, setBooting] = useState(true)
+  const initialBootstrapToken = useRef(Boolean(readBootstrapFragment(window.location)))
   const [bootstrapToken, setBootstrapToken] = useState(() => readBootstrapFragment(window.location))
   useEffect(() => { scrubBootstrapFragment(window.location, window.history) }, [])
 
@@ -70,6 +72,7 @@ function App() {
     async function initialize() {
       try {
         const status = await api('/setup/status', { signal })
+        if (signal.aborted) return
         setSetupStatus(status)
         if (status.demoMode || !status.needsSetup || inviteToken) setBootstrapToken('')
         document.title = status.demoMode ? 'Northstar v2 · DEMO' : 'Northstar v2 · Aplicación normal'
@@ -85,6 +88,10 @@ function App() {
         } else if (status.needsSetup) {
           setDemoSession(null)
           setAuthMode('bootstrap')
+          if (status.bootstrapEnabled && status.autoTokenEnabled && !initialBootstrapToken.current) {
+            const result = await claimBootstrapToken()
+            if (!signal.aborted) setBootstrapToken(result.bootstrapToken)
+          }
         } else {
           setDemoSession(null)
           const result = await api('/auth/me', { signal })
@@ -175,6 +182,7 @@ function App() {
       })
 
       setBootstrapToken('')
+      initialBootstrapToken.current = false
       setSetupStatus((status) => ({ ...status, needsSetup: false, bootstrapEnabled: false }))
       setAuthMode('login')
       setUser(result.user)
