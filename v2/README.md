@@ -71,15 +71,15 @@ export APP_BASE_URL="http://localhost:5174"
 npm run dev
 ```
 
-En el **primer arranque normal**, si la base aún no tiene usuarios, la aplicación genera automáticamente un `BOOTSTRAP_TOKEN` criptográfico de 256 bits. No necesitas OpenSSL ni definirlo a mano. Se guarda en `<ruta-de-la-base>.bootstrap-token.local`, con permisos `0600`, y la consola indica su ubicación **sin imprimir el secreto**. Con los valores predeterminados, desde la raíz del repositorio:
+En el **primer arranque normal**, si la base aún no tiene usuarios, la aplicación genera automáticamente un `BOOTSTRAP_TOKEN` criptográfico de 256 bits y un **enlace privado de instalación**. Abre ese enlace: la interfaz carga el token y ofrece **Mostrar/ocultar** y **Copiar token**, sin tener que copiarlo desde una terminal. Pégalo en tu gestor de contraseñas; el botón copia al portapapeles, **no lo guarda automáticamente** en un lugar seguro.
 
-```sh
-cat v2/data/webai-live.sqlite.bootstrap-token.local
-```
+El operador obtiene el enlace en `<ruta-de-la-base>.bootstrap-link.local`. Con los valores predeterminados es `v2/data/webai-live.sqlite.bootstrap-link.local`. La consola indica únicamente la ruta del archivo. El destino utiliza `APP_BASE_URL` si está definido, el dominio de la vista previa en Arena o `http://localhost:3002/` en local. En desarrollo con Vite configura `APP_BASE_URL` como en el ejemplo anterior.
 
-Copia ese valor en el campo **Token de configuración de un solo uso**. El primer acceso solicita empresa, administrador, correo, contraseña y token de configuración. El token se conserva si reinicias antes de terminar el alta, y se elimina e invalida al crear el administrador. No se genera en la demo ni cuando ya existen usuarios. Si usas una base personalizada, cambia la ruta del comando anterior.
+**El enlace es una credencial de un solo uso: entrégalo exclusivamente a quien deba crear el administrador.** El token va en el fragmento `#setup=...`, nunca en la query: el navegador no lo envía al servidor ni en Referer. La interfaz lo retira de la dirección con `replaceState`, lo mantiene solo en memoria y lo borra de su estado al terminar el alta. No se guarda en localStorage/sessionStorage. Si recargas antes de completar el alta, abre de nuevo tu enlace privado. La URL pública normal no revela ni genera un token para cualquier visitante.
 
-Puedes seguir proporcionando `BOOTSTRAP_TOKEN` desde tu gestor de secretos (al menos 32 caracteres); tiene prioridad sobre la generación automática. Un valor explícito demasiado corto detiene el arranque, sin sustituirlo silenciosamente. La carpeta de la base debe ser escribible por el usuario del servidor. El archivo generado queda excluido de Git. Comparte el token por un canal seguro: no lo añadas a URLs, logs ni al repositorio. Los usuarios de la versión original **no se importan automáticamente**; crea el administrador y nuevas invitaciones en esta base independiente.
+El primer acceso solicita empresa, administrador, correo, contraseña y token de configuración (precargado al abrir tu enlace). El token y el enlace se conservan si reinicias antes de terminar, y se eliminan e invalidan al crear el administrador. No se generan en la demo ni cuando ya existen usuarios. El token original también permanece en `<ruta-de-la-base>.bootstrap-token.local` para operadores que necesiten recuperarlo manualmente. Ambos archivos tienen permisos `0600` y están excluidos de Git.
+
+Puedes seguir proporcionando `BOOTSTRAP_TOKEN` desde tu gestor de secretos (al menos 32 caracteres); tiene prioridad sobre la generación automática y también permite generar el enlace privado. Un valor explícito demasiado corto detiene el arranque, sin sustituirlo silenciosamente. La carpeta de la base debe ser escribible por el usuario del servidor. No compartas el enlace ni el token en espacios públicos, capturas, logs ni en el repositorio. Los usuarios de la versión original **no se importan automáticamente**; crea el administrador y nuevas invitaciones en esta base independiente.
 
 No se cargan archivos `.env` automáticamente. Configura las variables en la terminal o en tu plataforma de despliegue.
 

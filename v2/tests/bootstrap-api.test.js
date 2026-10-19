@@ -31,6 +31,7 @@ test('el token autogenerado habilita el alta una sola vez y nunca se entrega por
     assert.equal(data.user.role, 'admin')
     assert.equal(JSON.stringify(data).includes(token), false)
     assert.equal(existsSync(file), false)
+    assert.equal(existsSync(file.replace('.bootstrap-token.local', '.bootstrap-link.local')), false)
     assert.equal(process.env.BOOTSTRAP_TOKEN, '')
     assert.equal((await submit(token)).status, 403)
     const after = await (await fetch(`${base}/setup/status`)).json()

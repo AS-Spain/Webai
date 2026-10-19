@@ -1,14 +1,24 @@
 import { randomBytes } from 'node:crypto'
 import { constants, closeSync, fstatSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { privateBootstrapLink, writePrivateBootstrapLink } from './bootstrap-link.js'
 
 // A private, database-specific secret survives restarts until the first admin is
 // created. Never return it in HTTP responses, frontend bundles or server logs.
 export function prepareBootstrap({ db, demo, dbPath, env = process.env, log = console.info }) {
   const file = `${path.resolve(dbPath)}.bootstrap-token.local`
+  const linkFile = `${path.resolve(dbPath)}.bootstrap-link.local`
   const consume = () => {
     env.BOOTSTRAP_TOKEN = ''
-    try { unlinkSync(file) } catch (error) { if (error.code !== 'ENOENT') console.warn('No se pudo eliminar el token inicial utilizado:', file) }
+    for (const secretFile of [file, linkFile]) {
+      try { unlinkSync(secretFile) } catch (error) { if (error.code !== 'ENOENT') console.warn('No se pudo eliminar la credencial inicial utilizada:', secretFile) }
+    }
+  }
+  const ready = (token) => {
+    writePrivateBootstrapLink(linkFile, privateBootstrapLink(env, token))
+    env.BOOTSTRAP_TOKEN = token
+    log(`Configuración inicial: abre el enlace privado guardado en ${linkFile}. La interfaz permite mostrar y copiar el token. No compartas ese enlace; se invalida al crear el administrador.`)
+    return { consume }
   }
   if (demo) return { consume() {} }
   if (db.prepare('SELECT COUNT(*) AS count FROM users').get().count) {
@@ -18,7 +28,7 @@ export function prepareBootstrap({ db, demo, dbPath, env = process.env, log = co
   }
   if (env.BOOTSTRAP_TOKEN) {
     if (env.BOOTSTRAP_TOKEN.trim().length < 32) throw new Error('BOOTSTRAP_TOKEN debe tener al menos 32 caracteres. Elimina la variable para generar uno seguro automáticamente.')
-    return { consume }
+    return ready(env.BOOTSTRAP_TOKEN)
   }
 
   let descriptor
@@ -37,7 +47,5 @@ export function prepareBootstrap({ db, demo, dbPath, env = process.env, log = co
     token = readFileSync(descriptor, 'utf8').trim()
     if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('El archivo del token inicial no es válido. Retíralo y reinicia para generar uno nuevo.')
   } finally { closeSync(descriptor) }
-  env.BOOTSTRAP_TOKEN = token
-  log(`Configuración inicial habilitada. Copia el token del archivo privado ${file} en el formulario del primer administrador. Se eliminará al completar el alta.`)
-  return { consume }
+  return ready(token)
 }

@@ -20,6 +20,11 @@ function fixture(run) {
 test('primer inicio: genera token aleatorio privado, estable al reiniciar y consumible', () => fixture(({ file, env, options, messages }) => {
   const bootstrap = prepareBootstrap(options)
   const first = env.BOOTSTRAP_TOKEN
+  const linkFile = file.replace('.bootstrap-token.local', '.bootstrap-link.local')
+  assert.equal(statSync(linkFile).mode & 0o777, 0o600)
+  const link = new URL(readFileSync(linkFile, 'utf8').trim())
+  assert.equal(new URLSearchParams(link.hash.slice(1)).get('setup'), first)
+  assert.equal(link.search, '')
   assert.match(first, /^[a-f0-9]{64}$/)
   assert.equal(readFileSync(file, 'utf8').trim(), first)
   assert.equal(statSync(file).mode & 0o777, 0o600)
@@ -30,6 +35,7 @@ test('primer inicio: genera token aleatorio privado, estable al reiniciar y cons
   bootstrap.consume()
   assert.equal(env.BOOTSTRAP_TOKEN, '')
   assert.equal(existsSync(file), false)
+  assert.equal(existsSync(linkFile), false)
 }))
 
 test('respeta un token manual y rechaza una configuración explícita débil', () => fixture(({ file, env, options }) => {

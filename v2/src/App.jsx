@@ -9,6 +9,7 @@ import { useClock } from './hooks/useClock.js'
 import { useSearch } from './hooks/useSearch.js'
 import { useWorkspace } from './hooks/useWorkspace.js'
 import BootstrapScreen from './components/BootstrapScreen.jsx'
+import { readBootstrapFragment, scrubBootstrapFragment } from './lib/bootstrap-link.js'
 import ActivationScreen from './components/ActivationScreen.jsx'
 import LoginScreen from './components/LoginScreen.jsx'
 import Dashboard from './pages/Dashboard.jsx'
@@ -33,6 +34,8 @@ function App() {
   const [user, setUser] = useState(null)
   const [company, setCompany] = useState('Northstar Studio')
   const [booting, setBooting] = useState(true)
+  const [bootstrapToken, setBootstrapToken] = useState(() => readBootstrapFragment(window.location))
+  useEffect(() => { scrubBootstrapFragment(window.location, window.history) }, [])
 
   const [inviteToken] = useState(
     () => new URLSearchParams(window.location.search).get('invite') || ''
@@ -68,6 +71,7 @@ function App() {
       try {
         const status = await api('/setup/status', { signal })
         setSetupStatus(status)
+        if (status.demoMode || !status.needsSetup || inviteToken) setBootstrapToken('')
         document.title = status.demoMode ? 'Northstar v2 · DEMO' : 'Northstar v2 · Aplicación normal'
         if (status.demoMode) {
           const result = await api('/auth/demo', { method: 'POST', signal, body: JSON.stringify({ role: 'admin' }) })
@@ -170,6 +174,9 @@ function App() {
         body: JSON.stringify(Object.fromEntries(form.entries())),
       })
 
+      setBootstrapToken('')
+      setSetupStatus((status) => ({ ...status, needsSetup: false, bootstrapEnabled: false }))
+      setAuthMode('login')
       setUser(result.user)
       setCompany(result.company)
     } catch (requestError) {
@@ -356,6 +363,8 @@ function App() {
         onSubmit={bootstrapWorkspace}
         error={error}
         enabled={setupStatus?.bootstrapEnabled}
+        token={bootstrapToken}
+        onTokenChange={setBootstrapToken}
       />
     )
   }

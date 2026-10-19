@@ -810,3 +810,15 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .demo-banner select { background: #fffaf1; border: 1px solid #ddcaa7; border-radius: 6px; padding: 6px; color: inherit; }
 .demo-entry-profiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 20px 0; }
 @media (max-width: 640px) { .demo-banner { padding: 12px 18px; flex-direction: column; align-items: flex-start; gap: 8px; } }
+
+/* Installation secrets are only loaded through an owner-held private link. */
+.bootstrap-token-panel { min-width: 0; padding: 16px; margin: 4px 0 7px; border: 1px solid #cbdccf; border-radius: 8px; background: #f1f6f0; }
+.bootstrap-token-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: #355640; font-size: 12px; }
+.bootstrap-token-heading span { margin-left: auto; font-size: 8px; letter-spacing: .06em; }
+.bootstrap-token-panel p { color: #647368; font-size: 11px; line-height: 1.6; margin: 10px 0; }
+.bootstrap-token-panel > label { margin-bottom: 6px; }
+.bootstrap-token-panel > input { font: 12px/1.5 monospace; }
+.bootstrap-token-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.bootstrap-token-actions .button { flex: 1; justify-content: center; padding: 9px; font-size: 10px; }
+.bootstrap-token-panel .bootstrap-token-safety { font-size: 10px; margin-bottom: 0; }
+.bootstrap-copy-status { margin-top: 10px; font-size: 11px; color: #355640; line-height: 1.6; }
