@@ -71,6 +71,3 @@ export const pageMeta = {
   team: [t("Your team"), t("People, responsibilities, and access.")],
   settings: [t("Workspace settings"), t("Manage your workspace and connected services.")],
 }
-
-export const demoEmail = 'olivia@northstar.io'
-export const demoPassword = 'Northstar2026!'

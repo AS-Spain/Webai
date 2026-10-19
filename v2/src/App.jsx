@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react'
 import { ArrowRight, Bell, CheckCircle2, ChevronDown, CircleHelp, Command, Compass, LogOut, Menu, Plus, Search, Settings2, ShieldAlert, Sparkles, Users, X } from 'lucide-react'
 import { navGroups, pageMeta, can } from './lib/config.js'
 import { formatDate, initials } from './lib/format.js'
-import { api } from './lib/api.js'
+import DemoWelcome from './components/DemoWelcome.jsx'
+import { api, setDemoSession } from './lib/api.js'
 import { useClock } from './hooks/useClock.js'
 import { useSearch } from './hooks/useSearch.js'
 import { useWorkspace } from './hooks/useWorkspace.js'
@@ -61,35 +62,70 @@ function App() {
   const { workspace, loading, loadWorkspace, pageInfo, changePage, filter, changeFilter } = useWorkspace(page, user?.role, modal, setError)
 
   useEffect(() => {
-    if (inviteToken) {
-      api(`/invitations/validate?token=${encodeURIComponent(inviteToken)}`)
-        .then(setInviteInfo)
-        .catch((requestError) => setError(requestError.message))
-        .finally(() => setBooting(false))
-
-      return
-    }
-
-    api('/setup/status')
-      .then((status) => {
+    const controller = new AbortController()
+    const signal = controller.signal
+    async function initialize() {
+      try {
+        const status = await api('/setup/status', { signal })
         setSetupStatus(status)
-
-        if (status.needsSetup) {
-          setAuthMode('bootstrap')
-          return
-        }
-
-        return api('/auth/me').then((result) => {
+        document.title = status.demoMode ? 'Northstar v2 · DEMO' : 'Northstar v2 · Aplicación normal'
+        if (status.demoMode) {
+          const result = await api('/auth/demo', { method: 'POST', signal, body: JSON.stringify({ role: 'admin' }) })
+          setDemoSession(result)
           setUser(result.user)
           setCompany(result.company)
-
-        })
-      })
-      .catch((requestError) => {
-        if (requestError.status !== 401) setError(requestError.message)
-      })
-      .finally(() => setBooting(false))
+        } else if (inviteToken) {
+          setDemoSession(null)
+          const info = await api(`/invitations/validate?token=${encodeURIComponent(inviteToken)}`, { signal })
+          setInviteInfo(info)
+        } else if (status.needsSetup) {
+          setDemoSession(null)
+          setAuthMode('bootstrap')
+        } else {
+          setDemoSession(null)
+          const result = await api('/auth/me', { signal })
+          setUser(result.user)
+          setCompany(result.company)
+        }
+      } catch (requestError) {
+        if (!signal.aborted && requestError.status !== 401) setError(requestError.message)
+      } finally { if (!signal.aborted) setBooting(false) }
+    }
+    initialize()
+    return () => controller.abort()
   }, [inviteToken])
+
+  useEffect(() => {
+    const expired = (event) => {
+      setDemoSession(null)
+      setUser(null)
+      setModal('')
+      setActivityOpen(false)
+      setInviteUrl('')
+      setSearch('')
+      setAuthMode('login')
+      setError(event.detail || 'Tu sesión ha caducado. Inicia sesión de nuevo.')
+    }
+    window.addEventListener('northstar:session-expired', expired)
+    return () => window.removeEventListener('northstar:session-expired', expired)
+  }, [])
+
+  async function enterDemo(role = 'admin') {
+    setBooting(true)
+    setError('')
+    try {
+      const result = await api('/auth/demo', { method: 'POST', body: JSON.stringify({ role }) })
+      setDemoSession(result)
+      setModal('')
+      setActivityOpen(false)
+      setSearch('')
+      setInviteUrl('')
+      setPage('dashboard')
+      setUser(result.user)
+      setCompany(result.company)
+    } catch (requestError) { setError(requestError.message) }
+    finally { setBooting(false) }
+  }
 
   useEffect(() => {
     if (!toast) return undefined
@@ -169,6 +205,7 @@ function App() {
 
   async function signOut() {
     await api('/auth/logout', { method: 'POST' }).catch(() => {})
+    setDemoSession(null)
     setUser(null)
     setAuthMode('login')
     setInviteUrl('')
@@ -311,6 +348,8 @@ function App() {
     )
   }
 
+  if (!user && setupStatus?.demoMode) return <DemoWelcome onEnter={enterDemo} error={error} />
+
   if (!user && authMode === 'bootstrap') {
     return (
       <BootstrapScreen
@@ -341,7 +380,6 @@ function App() {
       <LoginScreen
         onSubmit={signIn}
         error={error}
-        demoMode={setupStatus?.demoMode}
       />
     )
   }
@@ -542,6 +580,14 @@ function App() {
           </div>
         </header>
 
+        {setupStatus?.demoMode && <div className="demo-banner" role="region" aria-label="Entorno de demostración">
+          <span><strong>DEMO · Datos de ejemplo</strong> Separada de la web normal. No introduzcas datos reales ni claves.</span>
+          <label>Perfil de prueba
+            <select aria-label="Perfil de prueba" value={user.role} onChange={(event) => enterDemo(event.target.value)}>
+              <option value="admin">Administrador</option><option value="manager">Gestor</option><option value="member">Miembro</option><option value="viewer">Solo lectura</option>
+            </select>
+          </label>
+        </div>}
         <div
           className="content-scroll"
           onClick={() => searchOpen && setSearchOpen(false)}

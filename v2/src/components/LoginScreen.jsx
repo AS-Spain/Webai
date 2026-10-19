@@ -1,8 +1,7 @@
 import { t } from '../lib/i18n.js'
-import { ArrowRight, Check, Compass } from 'lucide-react'
-import { demoEmail, demoPassword } from '../lib/config.js'
+import { ArrowRight, Compass } from 'lucide-react'
 
-function LoginScreen({ onSubmit, error, demoMode }) {
+function LoginScreen({ onSubmit, error }) {
   return (
     <main className="login-layout">
       <section className="login-story">
@@ -33,7 +32,7 @@ function LoginScreen({ onSubmit, error, demoMode }) {
           <label> {t("Email address")} <input
               name="email"
               type="email"
-              defaultValue={demoMode ? demoEmail : ''}
+              defaultValue=""
               autoComplete="username"
               required
             />
@@ -41,7 +40,7 @@ function LoginScreen({ onSubmit, error, demoMode }) {
           <label> {t("Password")} <input
               name="password"
               type="password"
-              defaultValue={demoMode ? demoPassword : ''}
+              defaultValue=""
               autoComplete="current-password"
               required
             />
@@ -51,16 +50,6 @@ function LoginScreen({ onSubmit, error, demoMode }) {
 
           <button className="button button-primary login-submit" type="submit"> {t("Continue")} <ArrowRight size={16} />
           </button>
-
-          {demoMode && (
-            <div className="demo-note">
-              <span className="demo-check"><Check size={13} /></span>
-              <span>
-                <strong> {t("Demo workspace")} </strong>
-                <small> {t("Credentials are prefilled. Sign in to explore.")} </small>
-              </span>
-            </div>
-          )}
 
           <div className="login-foot">
             <span> {t("Protected workspace")} </span>

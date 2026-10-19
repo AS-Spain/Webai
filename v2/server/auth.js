@@ -4,18 +4,28 @@ import { SessionStore } from './sessions.js'
 export function registerAuthRoutes(app, db, demoMode, recordActivity) {
   const sessions = new SessionStore(db)
   const loginAttempts = new Map()
-  const sessionCookie = 'webai_v2_session'
+  const sessionCookie = demoMode ? 'webai_v2_demo_session' : 'webai_v2_private_session'
+  const readSession = (req) => {
+    // Memory-only bearer sessions are exclusive to the public demo. Normal users use HttpOnly cookies.
+    if (demoMode && req.headers.authorization?.startsWith('Bearer ')) return req.headers.authorization.slice(7)
+    return req.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${sessionCookie}=`))?.slice(sessionCookie.length + 1)
+  }
+  const cookieAttributes = (req) => {
+    const preview = /^[a-z0-9-]+\.e2b\.app$/i.test((req.get('host') || '').split(':')[0])
+    return preview ? '; Secure; SameSite=None; Partitioned' : `; SameSite=Strict${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
+  }
+  const clearCookie = (req, res) => res.setHeader('Set-Cookie', `${sessionCookie}=; HttpOnly; Path=/; Max-Age=0${cookieAttributes(req)}`)
   const sessionDuration = 8 * 60 * 60 * 1000
   const userByEmail = db.prepare('SELECT * FROM users WHERE email = ?')
-  const setSessionCookie = (res, sessionId) => {
-    const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
-    res.setHeader('Set-Cookie', `${sessionCookie}=${sessionId}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionDuration / 1000}${secure}`)
+  const setSessionCookie = (req, res, sessionId) => {
+    res.setHeader('Set-Cookie', `${sessionCookie}=${sessionId}; HttpOnly; Path=/; Max-Age=${sessionDuration / 1000}${cookieAttributes(req)}`)
   }
 
-  function establishSession(res, user) {
+  function establishSession(req, res, user) {
     const sessionId = randomBytes(32).toString('hex')
     sessions.set(sessionId, { userId: user.id, tenantId: user.tenant_id, expiresAt: Date.now() + sessionDuration })
-    setSessionCookie(res, sessionId)
+    setSessionCookie(req, res, sessionId)
+    if (demoMode) res.locals.demoSessionToken = sessionId
     return { id: user.id, name: user.name, email: user.email, role: user.role }
   }
 
@@ -36,10 +46,11 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity) {
 
   app.get('/api/setup/status', (req, res) => {
     const users = db.prepare('SELECT COUNT(*) AS count FROM users').get().count
-    res.json({ needsSetup: users === 0, bootstrapEnabled: Boolean(process.env.BOOTSTRAP_TOKEN), demoMode })
+    res.json({ needsSetup: users === 0, bootstrapEnabled: !demoMode && Boolean(process.env.BOOTSTRAP_TOKEN), demoMode })
   })
 
   app.post('/api/setup/bootstrap', (req, res) => {
+    if (demoMode) return res.status(403).json({ error: 'La demo no admite el alta de espacios privados.' })
     if (!validBootstrapToken(req.body?.bootstrapToken)) return res.status(403).json({ error: 'Token de configuración no válido. Contacta con quien administra el despliegue.' })
     if (db.prepare('SELECT COUNT(*) AS count FROM users').get().count) return res.status(409).json({ error: 'El administrador inicial ya fue creado.' })
 
@@ -70,7 +81,7 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity) {
     try {
       const user = createWorkspace()
       process.env.BOOTSTRAP_TOKEN = ''
-      const publicUser = establishSession(res, user)
+      const publicUser = establishSession(req, res, user)
       return res.status(201).json({ user: publicUser, company })
     } catch (error) {
       if (error.message === 'BOOTSTRAP_ALREADY_USED') return res.status(409).json({ error: 'El administrador inicial ya fue creado.' })
@@ -117,13 +128,28 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity) {
         recordActivity(user, 'accepted', 'invitation', invitation.id, `Aceptó la invitación como ${invitation.role}.`)
         return { user, company: db.prepare('SELECT name FROM tenants WHERE id = ?').get(invitation.tenant_id).name }
       })()
-      const publicUser = establishSession(res, accept.user)
+      const publicUser = establishSession(req, res, accept.user)
       return res.status(201).json({ user: publicUser, company: accept.company })
     } catch (error) {
       if (error.message === 'INVITATION_NOT_ACTIVE') return res.status(410).json({ error: 'La invitación ha caducado, fue revocada o ya se utilizó.' })
       if (error.message === 'INVITATION_EMAIL_EXISTS' || error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'Ya existe una cuenta con ese correo.' })
       throw error
     }
+  })
+
+  app.post('/api/auth/demo', (req, res) => {
+    if (!demoMode) return res.status(404).json({ error: 'El acceso demo no está disponible en esta aplicación.' })
+    const accounts = { admin: 'ava@northstar.io', manager: 'olivia@northstar.io', member: 'marcus@northstar.io', viewer: 'jonah@northstar.io' }
+    const role = req.body?.role || 'admin'
+    if (!Object.hasOwn(accounts, role)) return res.status(400).json({ error: 'Perfil demo no válido.' })
+    const user = db.prepare("SELECT * FROM users WHERE email = ? AND tenant_id = 'tenant-northstar' AND status = 'active' AND role = ?").get(accounts[role], role)
+    if (!user) return res.status(409).json({ error: 'Ese perfil demo no está disponible. Elige otro perfil.' })
+    // Do not revoke another tab's demo session merely because it shares a cookie.
+    const previous = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null
+    if (previous) sessions.delete(previous)
+    const publicUser = establishSession(req, res, user)
+    res.setHeader('Cache-Control', 'no-store')
+    res.json({ user: publicUser, company: 'Northstar · DEMO', sessionToken: res.locals.demoSessionToken, demoMode: true })
   })
 
   app.post('/api/auth/login', (req, res) => {
@@ -147,23 +173,24 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity) {
     }
 
     loginAttempts.delete(address)
-    const publicUser = establishSession(res, user)
+    const publicUser = establishSession(req, res, user)
     return res.json({ user: publicUser, company: db.prepare('SELECT name FROM tenants WHERE id = ?').get(user.tenant_id).name })
   })
 
   app.post('/api/auth/logout', (req, res) => {
-    const sessionId = req.headers.cookie?.match(/(?:^|;\s*)webai_v2_session=([^;]+)/)?.[1]
+    const sessionId = readSession(req)
     if (sessionId) sessions.delete(sessionId)
-    res.setHeader('Set-Cookie', `${sessionCookie}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`)
+    clearCookie(req, res)
     res.status(204).end()
   })
 
   function authenticate(req, res, next) {
-    const sessionId = req.headers.cookie?.match(/(?:^|;\s*)webai_v2_session=([^;]+)/)?.[1]
+    const sessionId = readSession(req)
     const session = sessionId && sessions.get(sessionId)
     if (!session || session.expiresAt <= Date.now()) {
       if (sessionId) sessions.delete(sessionId)
-      return res.status(401).json({ error: 'Tu sesión ha caducado. Inicia sesión de nuevo.' })
+      clearCookie(req, res)
+      return res.status(401).json({ code: sessionId ? 'SESSION_EXPIRED' : 'AUTH_REQUIRED', error: sessionId ? 'Tu sesión ha caducado. Inicia sesión de nuevo.' : 'Inicia sesión para acceder a tu espacio de trabajo.' })
     }
     const user = db.prepare('SELECT id, tenant_id, name, email, role, status FROM users WHERE id = ?').get(session.userId)
     if (!user || user.tenant_id !== session.tenantId) return res.status(401).json({ error: 'Sesión no válida.' })

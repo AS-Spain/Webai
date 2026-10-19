@@ -9,35 +9,56 @@ Versión independiente de la aplicación. **La versión original de la raíz no 
 | Código | Raíz del repositorio | `v2/` |
 | Interfaz en desarrollo | `5173` | `5174` |
 | API por defecto | `3001` | `3002` |
-| Base de datos por defecto | `data/webai.sqlite` | `v2/data/webai-v2.sqlite` |
-| Cookie | `webai_session` | `webai_v2_session` |
+| Base de datos por defecto | `data/webai.sqlite` | `v2/data/webai-live.sqlite` |
+| Cookie | `webai_session` | `webai_v2_private_session` |
 | Tema guardado | — | `northstar-v2-theme` |
 
 La v2 **no lee `DB_PATH`**: usa `V2_DB_PATH` para evitar reutilizar por accidente una variable de la versión original. No apuntes `V2_DB_PATH` a la base de datos original. Ambas versiones pueden ejecutarse al mismo tiempo con sus puertos predeterminados.
 
-## Probar la demo
+## Demo y aplicación normal: dos entornos independientes
 
-Requisitos: Node.js **22.12 o posterior** y npm. `better-sqlite3` puede necesitar herramientas de compilación C/C++ y las cabeceras de Node si no hay un binario disponible para tu plataforma.
+Requisitos: Node.js **22.12 o posterior** y npm. `better-sqlite3` puede necesitar herramientas C/C++ y cabeceras de Node si no hay un binario para tu plataforma.
 
 Desde la raíz del repositorio:
 
 ```sh
 cd v2
 npm ci
-DEMO_MODE=true npm run dev
+npm run build
 ```
 
-Abre **http://localhost:5174**. En Arena, abre la vista previa de la interfaz en el puerto **5174**. El puerto 3002 es la API, no la interfaz de desarrollo.
+### Probar sin registro
 
-Las credenciales precargadas de la demo son las mismas de la versión original y solo se habilitan con `DEMO_MODE=true`:
+```sh
+npm run demo
+```
 
-- Gestor: `olivia@northstar.io` (precargado en el formulario).
-- Administrador: `ava@northstar.io`.
-- Miembros: `marcus@northstar.io`, `priya@northstar.io`.
-- Lector: `jonah@northstar.io`.
-- Contraseña demo: `Northstar2026!`.
+Abre **http://localhost:3003** (en Arena, la vista previa **Northstar v2 · Demo**, puerto **3003**). Entra automáticamente con un administrador ficticio, sin correo ni contraseña. La franja **DEMO · Datos de ejemplo** permite cambiar entre administrador, gestor, miembro y solo lectura. Si sales, podrás volver a entrar con un clic.
 
-Los datos de ejemplo de esta versión están en español. No uses cuentas compartidas de demostración con datos reales. El modo demo no sustituye datos ya existentes.
+La demo tiene su propio SQLite (`v2/data/webai-demo.sqlite` por defecto), su cookie `webai_v2_demo_session` y su variable `V2_DEMO_DB_PATH`. **Ignora `V2_DB_PATH`** para no abrir accidentalmente una base privada. Se rechaza configurar ambos modos con la misma ruta de SQLite. La base guarda además su modo: no se permite abrir una base privada como demo ni una base con usuarios de ejemplo como aplicación normal, aunque se cambie su ruta o se utilice un alias.
+
+Es una demo compartida: no introduzcas datos reales ni secretos. El envío SMTP está desactivado. La configuración de IA de la demo solo admite servidores locales sin claves; las conexiones privadas y las claves de pago pertenecen a la aplicación normal. No se permite reutilizar claves antiguas guardadas en una base demo.
+
+Para funcionar también cuando el navegador bloquea cookies de terceros en la vista previa, la demo usa una sesión de prueba **solo en memoria del navegador**, que se renueva automáticamente ante una caducidad. No se guarda en localStorage/sessionStorage ni se transmite en URLs. Este mecanismo **no está habilitado en la aplicación normal**. Al recargar, se vuelve al perfil demo de administrador.
+
+### Aplicación normal
+
+En otra terminal, desde `v2/`:
+
+```sh
+npm start
+```
+
+Abre **http://localhost:3002** (vista previa **Northstar v2 · Aplicación normal**, puerto **3002**). Mantiene el inicio de sesión privado, utiliza la nueva cookie `webai_v2_private_session` e ignora las cookies de demos antiguas. Tras actualizar, los usuarios privados deben iniciar sesión de nuevo una vez. No admite el acceso automático de demo. En una base nueva requiere configurar el administrador inicial como se explica abajo. No importa usuarios ni datos de la demo. Las bases antiguas de pruebas (`webai-v2.sqlite`, `preview-*.sqlite`) se conservan, pero no se abren automáticamente. Si ya tenías una base privada real, indícala explícitamente con `V2_DB_PATH`, nunca con la variable de demo.
+
+`npm start` fuerza modo normal y `npm run demo` fuerza modo demo, incluso si se heredó otro valor de `DEMO_MODE`. Cada uno admite `PORT` como override explícito; usa puertos diferentes si los ejecutas a la vez.
+
+### Desarrollo con Vite
+
+- `npm run dev`: web normal **5174**, API **3002**.
+- `npm run dev:demo`: demo **5175**, API **3003**.
+
+Vite reenvía `/api` al backend correspondiente; el navegador nunca llama a un `localhost` remoto. No se cargan archivos `.env` automáticamente.
 
 ## Crear un espacio limpio
 
@@ -59,7 +80,7 @@ No se cargan archivos `.env` automáticamente. Configura las variables en la ter
 
 **Solo el admin configura una conexión compartida y todos los usuarios del workspace usan ese mismo proveedor y modelo.** Si todavía no tienes modelos, sigue la [guía de instalación local con Ollama o LM Studio](LOCAL_AI.md).
 
-1. Entra como **administrador**. En la demo utiliza `ava@northstar.io` y la contraseña demo indicada arriba; la cuenta precargada Olivia es gestora y no puede cambiar claves.
+1. Entra como **administrador**. En la aplicación normal usa tu administrador. La demo entra automáticamente con un administrador de prueba y no admite claves privadas.
 2. Abre **Configuración → Fast setup · IA real**.
 3. Elige **Ollama · local**, **LM Studio · local** u **Otro servidor compatible con OpenAI**. En local normalmente no necesitas clave: indica la URL `/v1` de un servidor de modelos ya instalado y en marcha. También se conservan OpenAI, Groq y OpenRouter como opciones de nube con clave API. No compartas secretos en chats, capturas ni en el repositorio.
 4. Pulsa **Consultar modelos** para elegir uno instalado/disponible o escribe su identificador. Ollama propone `qwen2.5:3b`; LM Studio necesita el identificador del modelo que hayas cargado. Los catálogos pueden contener modelos que no sean de chat: la prueba verificará la compatibilidad del elegido. La disponibilidad depende de tu cuenta y puede cambiar.
@@ -97,6 +118,8 @@ Las pruebas usan bases temporales y no tocan ni la demo ni los datos de la versi
 
 - Bootstrap de un solo uso, acceso y cierre de sesión.
 - Permisos de administrador, gestor, miembro y lector.
+- Separación de base/cookie/puerto de la demo, entrada y renovación sin cookies, rechazo del acceso demo en la web privada y restricciones de claves.
+- Retorno al login cuando caduca una sesión privada y protección frente a renovaciones tardías tras salir.
 - Aislamiento entre empresas, incluida la asignación de proyectos a tareas al crear y actualizar.
 - Invitaciones de un solo uso, revocadas y caducadas.
 - Persistencia, caducidad, almacenamiento hasheado y revocación de sesiones.
@@ -107,7 +130,7 @@ Las pruebas usan bases temporales y no tocan ni la demo ni los datos de la versi
 
 ### 2. Sesiones persistentes
 
-Las sesiones se guardan en SQLite, no en un `Map`. Sobreviven a reinicios, caducan a las ocho horas y se revocan al cerrar sesión o desactivar la cuenta. Solo se guarda el hash SHA-256 del token de la cookie. La cookie mantiene `HttpOnly` y `SameSite=Strict`, y utiliza `Secure` con `NODE_ENV=production`.
+Las sesiones privadas se guardan en SQLite, no en un `Map`. Sobreviven a reinicios, caducan a las ocho horas y se revocan al cerrar sesión o desactivar la cuenta. Solo se guarda el hash SHA-256 del token de la cookie. La cookie privada mantiene `HttpOnly`, `SameSite=Strict` y `Secure` con `NODE_ENV=production`. En hosts de vista previa `*.e2b.app` usa `Secure; SameSite=None; Partitioned` para permitir el iframe sin compartir la cookie entre sitios. La caducidad durante el uso devuelve al formulario de acceso, no deja el panel bloqueado con un aviso. La sesión de prueba en memoria está restringida al servidor demo.
 
 Varias instancias que abran **el mismo archivo SQLite local** ven las mismas sesiones. Esto no equivale a un almacén distribuido: para despliegues en varias máquinas, incorpora Redis u otro almacén compartido adecuado.
 
@@ -182,6 +205,6 @@ npm run build
 NODE_ENV=production DEMO_MODE=false PORT=3002 npm start
 ```
 
-Express sirve la interfaz compilada y `/api` desde el mismo origen. Configura HTTPS, `APP_BASE_URL`, un volumen persistente para `v2/data/` o `V2_DB_PATH`, y las variables SMTP si corresponde. Las llamadas del navegador usan rutas relativas, nunca un `localhost` de otro servicio.
+Express sirve la interfaz compilada y `/api` desde el mismo origen. Configura HTTPS, `APP_BASE_URL`, un volumen persistente para `v2/data/` o `V2_DB_PATH` (la demo utiliza `V2_DEMO_DB_PATH`), y las variables SMTP si corresponde. Las llamadas del navegador usan rutas relativas, nunca un `localhost` de otro servicio.
 
 La v2 sigue siendo un MVP: antes de almacenar datos reales faltan, entre otros, recuperación de contraseña, copias y restauraciones verificadas, políticas de retención, revisión de seguridad y un limitador de intentos compartido para varias instancias. Las integraciones de calendario, Slack y Teams siguen sin implementarse. Hay conectividad de IA opcional con configuración por empresa; no hay una migración automática desde v1.

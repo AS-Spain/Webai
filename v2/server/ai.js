@@ -12,7 +12,7 @@ class AiError extends Error {
 const fail = (status, message) => { throw new AiError(status, message) }
 const text = (value, max = 200) => String(value ?? '').slice(0, max)
 
-export function registerAiRoutes(app, { db, day, recordActivity, fetchImpl = fetch, masterKeyPath, encryptionKey, allowedOrigins } = {}) {
+export function registerAiRoutes(app, { db, day, recordActivity, fetchImpl = fetch, masterKeyPath, encryptionKey, allowedOrigins, demoMode = false } = {}) {
   db.exec(`CREATE TABLE IF NOT EXISTS ai_settings (
     tenant_id TEXT PRIMARY KEY REFERENCES tenants(id),
     provider TEXT NOT NULL,
@@ -63,21 +63,23 @@ export function registerAiRoutes(app, { db, day, recordActivity, fetchImpl = fet
   function publicSettings(tenantId) {
     const value = settings(tenantId)
     return {
-      configured: Boolean(value), provider: value?.provider || '', model: value?.model || '',
+      demoMode, configured: Boolean(value), provider: value?.provider || '', model: value?.model || '',
       baseUrl: value?.base_url || (value ? providers.find((item) => item.id === value.provider)?.base : '') || '',
       local: Boolean(providers.find((item) => item.id === value?.provider)?.local),
       allowContext: Boolean(value?.allow_context), verifiedAt: value?.verified_at || null,
-      providers: providers.map(({ id, name, model, local, base }) => ({ id, name, model, local: Boolean(local), keyRequired: !local, baseUrl: base })),
+      providers: providers.filter((item) => !demoMode || item.local).map(({ id, name, model, local, base }) => ({ id, name, model, local: Boolean(local), keyRequired: !local, baseUrl: base })),
     }
   }
   function candidate(body, tenantId, needsModel = true) {
     const provider = providers.find((item) => item.id === body?.provider)
     if (!provider) fail(400, 'Selecciona uno de los proveedores disponibles.')
+    if (demoMode && (!provider.local || body?.apiKey)) fail(403, 'La demo compartida solo permite modelos locales sin claves. Configura los proveedores privados en la aplicación normal.')
     let baseUrl
     try { baseUrl = resolveBase(provider, body?.baseUrl, allowedOrigins) } catch (error) { fail(400, error.message) }
     const current = settings(tenantId)
     const sameDestination = current?.provider === provider.id && (current.base_url || provider.base) === baseUrl
     const apiKey = String(body?.apiKey || '').trim() || (sameDestination && current.encrypted_key ? decrypt(current.encrypted_key, tenantId) : '')
+    if (demoMode && apiKey) fail(403, 'La demo no puede utilizar claves guardadas. Desconecta esa configuración y usa un modelo local sin token.')
     if ((!apiKey && !provider.local) || apiKey.length > 4096 || /\s/.test(apiKey)) fail(400, 'Introduce una clave API válida para este proveedor.')
     const model = String(body?.model || '').trim()
     if (needsModel && !/^[a-z\d][a-z\d._:/@+-]{0,149}$/i.test(model)) fail(400, 'Introduce un identificador de modelo válido.')
@@ -190,6 +192,7 @@ export function registerAiRoutes(app, { db, day, recordActivity, fetchImpl = fet
     limit(req)
     const provider = providers.find((item) => item.id === stored.provider)
     if (!provider) fail(409, 'Vuelve a configurar un proveedor compatible.')
+    if (demoMode && (!provider.local || stored.encrypted_key)) fail(403, 'La demo no puede utilizar proveedores de pago ni claves privadas guardadas.')
     let baseUrl
     try { baseUrl = resolveBase(provider, stored.base_url, allowedOrigins) } catch (error) { fail(403, error.message) }
     const config = { provider, baseUrl, model: stored.model, apiKey: stored.encrypted_key ? decrypt(stored.encrypted_key, req.tenantId) : '' }

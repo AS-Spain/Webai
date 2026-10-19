@@ -17,10 +17,10 @@ const server = app.listen(0, '127.0.0.1')
 await new Promise((resolve) => server.once('listening', resolve))
 const base = `http://127.0.0.1:${server.address().port}/api`
 
-async function request(route, { cookie, body, method = 'GET' } = {}) {
+async function request(route, { cookie, body, token, method = 'GET' } = {}) {
   const response = await fetch(`${base}${route}`, {
     method,
-    headers: { ...(cookie ? { Cookie: cookie } : {}), 'Content-Type': 'application/json' },
+    headers: { ...(cookie ? { Cookie: cookie } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
     ...(body ? { body: JSON.stringify(body) } : {}),
   })
   return { status: response.status, body: await response.json().catch(() => null), cookie: response.headers.get('set-cookie')?.split(';')[0], headers: response.headers }
@@ -46,8 +46,12 @@ test('API v2: autenticación, permisos, empresas e invitaciones', async (suite) 
       const created = await request('/setup/bootstrap', { method: 'POST', body })
       assert.equal(created.status, 201)
       admin = created.cookie
-      assert.match(admin, /^webai_v2_session=/)
-      assert.match(created.headers.get('set-cookie'), /HttpOnly; SameSite=Strict/)
+      assert.equal(created.body.sessionToken, undefined)
+      assert.equal((await request('/auth/me', { token: admin.split('=')[1] })).status, 401)
+      assert.match(admin, /^webai_v2_private_session=/)
+      assert.match(created.headers.get('set-cookie'), /HttpOnly/)
+      assert.match(created.headers.get('set-cookie'), /SameSite=Strict/)
+      assert.equal((await request('/auth/demo', { method: 'POST' })).status, 404)
       assert.equal((await request('/setup/bootstrap', { method: 'POST', body })).status, 403)
       assert.equal((await request('/auth/me', { cookie: admin })).body.user.role, 'admin')
       tenantId = db.prepare('SELECT id FROM tenants').get().id

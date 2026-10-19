@@ -1,13 +1,63 @@
-export async function api(path, options = {}) {
-  const response = await fetch(`/api${path}`, {
-    credentials: 'same-origin',
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+// Demo tokens live only in this module's memory, never local/sessionStorage.
+// The normal application never receives a bearer session token.
+let demoSession = null
+let renewal = null
+let generation = 0
+export function setDemoSession(result) {
+  generation += 1
+  demoSession = result?.sessionToken ? { token: result.sessionToken, role: result.user.role } : null
+}
+function send(path, options = {}) {
+  return fetch(`/api${path}`, {
+    credentials: 'same-origin', ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(demoSession ? { Authorization: `Bearer ${demoSession.token}` } : {}),
+      ...options.headers,
+    },
   })
+}
+async function renewDemo() {
+  if (!renewal) {
+    const startingGeneration = generation
+    const role = demoSession.role
+    renewal = (async () => {
+      const response = await send('/auth/demo', { method: 'POST', body: JSON.stringify({ role }) })
+      if (!response.ok) throw new Error('No se pudo renovar la demo. Vuelve a entrar con un perfil de prueba.')
+      const result = await response.json()
+      if (generation !== startingGeneration) {
+        const error = new Error('El perfil demo ha cambiado. Vuelve a intentar la acción.')
+        error.code = 'DEMO_PROFILE_CHANGED'
+        throw error
+      }
+      setDemoSession(result)
+    })().finally(() => { renewal = null })
+  }
+  return renewal
+}
+export async function api(path, options = {}, retry = true) {
+  const sentToken = demoSession?.token
+  const sentRole = demoSession?.role
+  const response = await send(path, options)
+  const protectedRequest = !/^\/(auth|setup|invitations\/(validate|accept))(\/|\?|$)/.test(path)
+  if (response.status === 401 && demoSession && protectedRequest && retry && !options.signal?.aborted) {
+    if (demoSession.role !== sentRole) throw new Error('El perfil demo ha cambiado. Vuelve a intentar la acción.')
+    try { if (demoSession.token === sentToken) await renewDemo() } catch (error) {
+      if (error.code !== 'DEMO_PROFILE_CHANGED') {
+        setDemoSession(null)
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('northstar:session-expired', { detail: error.message }))
+      }
+      throw error
+    }
+    return api(path, options, false)
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
     const error = new Error(body.error || 'No se pudo completar la solicitud.')
     error.status = response.status
+    if (response.status === 401 && protectedRequest && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('northstar:session-expired', { detail: error.message }))
+    }
     throw error
   }
   return response.status === 204 ? null : response.json()

@@ -27,11 +27,11 @@
    cd v2
    npm ci
    npm run build
-   DEMO_MODE=true npm start
+   npm start
    ```
 
-   El prefijo `DEMO_MODE=true` es sintaxis de terminal POSIX. En PowerShell utiliza `$env:DEMO_MODE="true"; npm start`. Para datos reales, sigue el alta limpia del [README](README.md), sin modo demo.
-5. Abre <http://localhost:3002>. En la demo, entra como admin con `ava@northstar.io` y `Northstar2026!`.
+   Para tu conexión privada, sigue el alta limpia del [README](README.md) y configura tu administrador. Para una prueba pública separada, usa `npm run demo` en el puerto 3003: entra sin registro, pero solo admite modelos locales sin token ni datos privados.
+5. Abre <http://localhost:3002>. Entra con tu administrador privado. No uses cuentas de la demo en esta aplicación.
 6. En **Configuración → Fast setup**, selecciona **Ollama · local**:
 
    - URL: `http://127.0.0.1:11434/v1`

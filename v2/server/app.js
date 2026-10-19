@@ -6,9 +6,11 @@ import { fileURLToPath } from 'node:url'
 import { db, day, dayStart, demoMode } from './database.js'
 import { registerAuthRoutes } from './auth.js'
 import { resourceConfig, resourceRoles, parseRow } from './resources.js'
+import { runtimeConfig } from './runtime.js'
 import { registerAiRoutes } from './ai.js'
 import { pagination } from './pagination.js'
 
+const runtime = runtimeConfig()
 const root = path.dirname(fileURLToPath(import.meta.url))
 
 const app = express()
@@ -21,7 +23,7 @@ app.use((req, res, next) => {
 })
 
 const invitationDuration = 48 * 60 * 60 * 1000
-const smtpTransport = process.env.SMTP_HOST ? nodemailer.createTransport({
+const smtpTransport = !demoMode && process.env.SMTP_HOST ? nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: Number(process.env.SMTP_PORT || 587),
   secure: process.env.SMTP_SECURE === 'true',
@@ -52,7 +54,7 @@ app.get('/api/auth/me', authenticate, (req, res) => {
 })
 
 app.use('/api', authenticate)
-registerAiRoutes(app, { db, day, recordActivity })
+registerAiRoutes(app, { db, day, recordActivity, demoMode, masterKeyPath: runtime.keyPath })
 
 app.get('/api/search', (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 100)

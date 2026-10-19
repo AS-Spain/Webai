@@ -3,17 +3,21 @@ import { randomBytes, randomUUID, scryptSync } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { guardDatabaseMode } from './database-mode.js'
+import { runtimeConfig } from './runtime.js'
 import { localDateKey } from '../src/lib/dates.js'
 
 // Business dates use a configurable server timezone, independent of the host OS.
 process.env.TZ = process.env.V2_TIME_ZONE || process.env.TZ || 'Europe/Madrid'
 
+const runtime = runtimeConfig()
 const root = path.dirname(fileURLToPath(import.meta.url))
 const dataDir = path.resolve(root, '../data')
 mkdirSync(dataDir, { recursive: true })
-export const db = new Database(process.env.V2_DB_PATH || path.join(dataDir, 'webai-v2.sqlite'))
+export const db = new Database(runtime.dbPath)
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
+guardDatabaseMode(db, runtime.demo)
 db.exec(`
   CREATE TABLE IF NOT EXISTS tenants (
     id TEXT PRIMARY KEY,
@@ -129,7 +133,7 @@ if (!userColumns.has('status')) db.exec("ALTER TABLE users ADD COLUMN status TEX
 if (!userColumns.has('deactivated_at')) db.exec('ALTER TABLE users ADD COLUMN deactivated_at TEXT')
 
 const now = new Date()
-const demoMode = process.env.DEMO_MODE === 'true'
+const demoMode = runtime.demo
 const day = (offset) => {
   const date = new Date()
   date.setDate(date.getDate() + offset)

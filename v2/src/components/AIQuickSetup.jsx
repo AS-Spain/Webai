@@ -92,6 +92,7 @@ export default function AIQuickSetup({ user }) {
           <i />{status.configured ? 'Configurada' : 'Sin conectar'}
         </span>}
       </div>
+      {status?.demoMode && <p className="ai-privacy-note">Demo pública: solo modelos locales sin claves. Configura las conexiones privadas en la aplicación normal, nunca aquí.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       {notice && <p className="ai-setup-notice" role="status"><CheckCircle2 size={16} />{notice}</p>}
       {busy === 'loading' && <p role="status">Cargando configuración…</p>}
@@ -111,7 +112,7 @@ export default function AIQuickSetup({ user }) {
           </label>
           <label>{local ? 'Token opcional' : 'Clave API'} <span className="ai-field-hint"><KeyRound size={12} /> Solo servidor</span>
             <input aria-label="Clave API" type="password" name="ai-api-key" autoComplete="off" spellCheck={false}
-              value={apiKey} onChange={(event) => setApiKey(event.target.value)} disabled={Boolean(busy)}
+              value={apiKey} onChange={(event) => setApiKey(event.target.value)} disabled={Boolean(busy) || status.demoMode}
               required={keyRequired && !sameDestination} maxLength={4096}
               placeholder={sameDestination ? 'Vacío para conservar el token guardado, si existe' : local ? 'Normalmente no se necesita clave en local' : 'Pega tu clave del proveedor'} />
           </label>
