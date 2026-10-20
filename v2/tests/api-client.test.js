@@ -94,3 +94,93 @@ test('un 401 antiguo que llega después de renovar no vuelve a rotar la sesión'
     assert.equal(renewals, 1)
   } finally { globalThis.fetch = previous; setDemoSession(null) }
 })
+
+test('una renovación antigua que falla no cierra la nueva sesión demo', async () => {
+  const previous = globalThis.fetch
+  const previousWindow = globalThis.window
+  const events = new EventTarget()
+  let expired = 0, fail
+  events.addEventListener('northstar:session-expired', () => { expired += 1 })
+  globalThis.window = events
+  setDemoSession({ sessionToken: 'old', user: { role: 'admin' } })
+  globalThis.fetch = async (url, options) => {
+    if (url === '/api/auth/demo') return new Promise((resolve, reject) => { fail = reject })
+    return options.headers.Authorization === 'Bearer new' ? json({ ok: true }) : json({ error: 'caducada' }, 401)
+  }
+  try {
+    const old = api('/overview')
+    await new Promise((resolve) => setImmediate(resolve))
+    setDemoSession({ sessionToken: 'new', user: { role: 'viewer' } })
+    fail(new Error('network error'))
+    await assert.rejects(old, /network error/)
+    assert.equal(expired, 0)
+    assert.equal((await api('/tasks')).ok, true)
+  } finally { globalThis.fetch = previous; globalThis.window = previousWindow; setDemoSession(null) }
+})
+
+test('cada perfil tiene su renovación y una respuesta antigua no la borra', async () => {
+  const previous = globalThis.fetch
+  let finishOld, finishNew
+  const roles = []
+  setDemoSession({ sessionToken: 'old-admin', user: { role: 'admin' } })
+  globalThis.fetch = async (url, options) => {
+    if (url === '/api/auth/demo') {
+      const role = JSON.parse(options.body).role
+      roles.push(role)
+      return new Promise((resolve) => { if (role === 'admin') finishOld = resolve; else finishNew = resolve })
+    }
+    return options.headers.Authorization === 'Bearer renewed-viewer' ? json({ ok: true }) : json({ error: 'caducada' }, 401)
+  }
+  try {
+    const old = api('/overview')
+    await new Promise((resolve) => setImmediate(resolve))
+    setDemoSession({ sessionToken: 'new-viewer', user: { role: 'viewer' } })
+    const current = api('/tasks')
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(roles, ['admin', 'viewer'])
+    finishOld(json({ sessionToken: 'old-renewed', user: { role: 'admin' } }))
+    await assert.rejects(old, /perfil demo ha cambiado/)
+    // Further requests must still share the viewer's pending renewal.
+    const parallel = api('/projects')
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(roles.length, 2)
+    finishNew(json({ sessionToken: 'renewed-viewer', user: { role: 'viewer' } }))
+    assert.equal((await current).ok, true)
+    assert.equal((await parallel).ok, true)
+  } finally { globalThis.fetch = previous; setDemoSession(null) }
+})
+
+test('los 401 permanentes detienen la renovación automática tras un reintento', async () => {
+  const previous = globalThis.fetch
+  let renewals = 0
+  setDemoSession({ sessionToken: 'old', user: { role: 'admin' } })
+  globalThis.fetch = async (url) => {
+    if (url === '/api/auth/demo') { renewals += 1; return json({ sessionToken: 'rejected', user: { role: 'admin' } }) }
+    return json({ error: 'sesión rechazada' }, 401)
+  }
+  try {
+    await assert.rejects(api('/overview'), /sesión rechazada/)
+    await assert.rejects(api('/tasks'), /sesión rechazada/)
+    assert.equal(renewals, 1)
+  } finally { globalThis.fetch = previous; setDemoSession(null) }
+})
+
+test('una petición cancelada al navegar no expulsa la sesión demo activa', async () => {
+  const previous = globalThis.fetch, previousWindow = globalThis.window
+  const events = new EventTarget(), controller = new AbortController()
+  let expired = 0
+  events.addEventListener('northstar:session-expired', () => { expired += 1 })
+  globalThis.window = events
+  setDemoSession({ sessionToken: 'active', user: { role: 'admin' } })
+  globalThis.fetch = async (url, options) => {
+    if (url === '/api/tasks') { controller.abort(); return json({ error: 'cancelled request' }, 401) }
+    assert.equal(url, '/api/overview')
+    assert.equal(options.headers.Authorization, 'Bearer active')
+    return json({ ok: true })
+  }
+  try {
+    await assert.rejects(api('/tasks', { signal: controller.signal }), /cancelled request/)
+    assert.equal(expired, 0)
+    assert.equal((await api('/overview')).ok, true)
+  } finally { globalThis.fetch = previous; globalThis.window = previousWindow; setDemoSession(null) }
+})

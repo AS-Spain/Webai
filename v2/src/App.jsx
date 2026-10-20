@@ -35,6 +35,7 @@ function App() {
   const [user, setUser] = useState(null)
   const [company, setCompany] = useState('Northstar Studio')
   const [booting, setBooting] = useState(true)
+  const demoEntryPending = useRef(false)
   const initialBootstrapToken = useRef(Boolean(readBootstrapFragment(window.location)))
   const [bootstrapToken, setBootstrapToken] = useState(() => readBootstrapFragment(window.location))
   useEffect(() => { scrubBootstrapFragment(window.location, window.history) }, [])
@@ -77,10 +78,8 @@ function App() {
         if (status.demoMode || !status.needsSetup || inviteToken) setBootstrapToken('')
         document.title = status.demoMode ? 'Northstar v2 · DEMO' : 'Northstar v2 · Aplicación normal'
         if (status.demoMode) {
-          const result = await api('/auth/demo', { method: 'POST', signal, body: JSON.stringify({ role: 'admin' }) })
-          setDemoSession(result)
-          setUser(result.user)
-          setCompany(result.company)
+          // Display the landing page once. Only a user action can enter/re-enter.
+          setDemoSession(null)
         } else if (inviteToken) {
           setDemoSession(null)
           const info = await api(`/invitations/validate?token=${encodeURIComponent(inviteToken)}`, { signal })
@@ -122,6 +121,8 @@ function App() {
   }, [])
 
   async function enterDemo(role = 'admin') {
+    if (demoEntryPending.current) return
+    demoEntryPending.current = true
     setBooting(true)
     setError('')
     try {
@@ -135,7 +136,7 @@ function App() {
       setUser(result.user)
       setCompany(result.company)
     } catch (requestError) { setError(requestError.message) }
-    finally { setBooting(false) }
+    finally { demoEntryPending.current = false; setBooting(false) }
   }
 
   useEffect(() => {
@@ -160,6 +161,7 @@ function App() {
         }),
       })
 
+      setDemoSession(null)
       setUser(result.user)
       setAuthMode('login')
       setCompany(result.company)

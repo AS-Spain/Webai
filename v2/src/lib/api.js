@@ -18,10 +18,12 @@ function send(path, options = {}) {
   })
 }
 async function renewDemo() {
-  if (!renewal) {
-    const startingGeneration = generation
+  const startingGeneration = generation
+  if (!renewal || renewal.generation !== startingGeneration) {
     const role = demoSession.role
-    renewal = (async () => {
+    const attempt = { generation: startingGeneration, promise: null }
+    renewal = attempt
+    attempt.promise = (async () => {
       const response = await send('/auth/demo', { method: 'POST', body: JSON.stringify({ role }) })
       if (!response.ok) throw new Error('No se pudo renovar la demo. Vuelve a entrar con un perfil de prueba.')
       const result = await response.json()
@@ -30,12 +32,14 @@ async function renewDemo() {
         error.code = 'DEMO_PROFILE_CHANGED'
         throw error
       }
+      if (!result.sessionToken || result.user?.role !== role) throw new Error('La sesión demo no es válida. Vuelve a entrar con un perfil de prueba.')
       setDemoSession(result)
-    })().finally(() => { renewal = null })
+    })().finally(() => { if (renewal === attempt) renewal = null })
   }
-  return renewal
+  return renewal.promise
 }
 export async function api(path, options = {}, retry = true) {
+  const sentGeneration = generation
   const sentToken = demoSession?.token
   const sentRole = demoSession?.role
   const response = await send(path, options)
@@ -43,7 +47,7 @@ export async function api(path, options = {}, retry = true) {
   if (response.status === 401 && demoSession && protectedRequest && retry && !options.signal?.aborted) {
     if (demoSession.role !== sentRole) throw new Error('El perfil demo ha cambiado. Vuelve a intentar la acción.')
     try { if (demoSession.token === sentToken) await renewDemo() } catch (error) {
-      if (error.code !== 'DEMO_PROFILE_CHANGED') {
+      if (error.code !== 'DEMO_PROFILE_CHANGED' && generation === sentGeneration) {
         setDemoSession(null)
         if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('northstar:session-expired', { detail: error.message }))
       }
@@ -55,8 +59,10 @@ export async function api(path, options = {}, retry = true) {
     const body = await response.json().catch(() => ({}))
     const error = new Error(body.error || 'No se pudo completar la solicitud.')
     error.status = response.status
-    if (response.status === 401 && protectedRequest && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('northstar:session-expired', { detail: error.message }))
+    if (response.status === 401 && protectedRequest && generation === sentGeneration && !options.signal?.aborted) {
+      // A permanently rejected session must stop here, not renew on every new request.
+      setDemoSession(null)
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('northstar:session-expired', { detail: error.message }))
     }
     throw error
   }
