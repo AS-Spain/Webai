@@ -88,7 +88,7 @@ Línea base: 110 pruebas correctas; tras primeras correcciones se reejecutaron l
 | Backup/restauración y apagado | PASS: copia desde WAL, integridad/lectura en DB aislada, no sobrescritura/no crear origen inexistente; SIGTERM conserva alta/sesión privada e integridad de SQLite. No se restauró la DB real. |
 | `git diff --check` | PASS. No se han modificado archivos originales de v1 ni hecho merge/deploy de producción. Las dos vistas de desarrollo se reiniciaron conservando sus DB: páginas/salud 200, normal anónima 401, demo anónima 200 sin red IA, archivos sintéticos privados 403 en API y Vite; origen exacto de preview aceptado y origen ajeno rechazado. |
 
-CI configurada para Node 22 y 24; la verificación local usa Node **22.22.3**. No se atribuye un resultado a GitHub Actions o Node 24 si todavía no se ha ejecutado/consultado. Las trazas completas locales están fuera del repositorio (`/home/user/audit-*.log`); no se versionan logs, datos, claves, dependencias ni bundles.
+CI **verificada** para el commit de código `0698252`: GitHub Actions terminó en **success en Node 22 y Node 24**, tanto en push como en pull_request, ejecutando instalación, pruebas, lint sin avisos, build y audit. Ejecuciones: [pull_request 39431231831](https://github.com/AS-Spain/Webai/actions/runs/39431231831) y [push 39431229382](https://github.com/AS-Spain/Webai/actions/runs/39431229382). La verificación local usa Node **22.22.3**. Este resultado no valida proveedores reales ni condiciones operativas de producción. Las trazas completas locales están fuera del repositorio (`/home/user/audit-*.log`); no se versionan logs, datos, claves, dependencias ni bundles.
 
 ## 5. Instalación, arranque y recuperación
 
