@@ -10,6 +10,7 @@ import { resourceConfig, resourceRoles, parseRow } from './resources.js'
 import { runtimeConfig } from './runtime.js'
 import { registerAiRoutes } from './ai.js'
 import { pagination } from './pagination.js'
+import { registerIntegrationRoutes } from './integrations.js'
 
 const runtime = runtimeConfig()
 const root = path.dirname(fileURLToPath(import.meta.url))
@@ -54,6 +55,8 @@ app.get('/api/auth/me', authenticate, (req, res) => {
   const company = db.prepare('SELECT name FROM tenants WHERE id = ?').get(req.tenantId).name
   res.json({ user: req.user, company, ...(demoMode ? { demoMode: true } : {}) })
 })
+
+registerIntegrationRoutes(app, { db, authenticate, demoMode, keyPath: path.join(path.dirname(runtime.keyPath), demoMode ? 'integrations-demo-master.key' : 'integrations-master.key'), recordActivity })
 
 app.use('/api', authenticate)
 registerAiRoutes(app, { db, day, recordActivity, demoMode, masterKeyPath: runtime.keyPath })

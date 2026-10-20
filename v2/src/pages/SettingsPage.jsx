@@ -1,6 +1,7 @@
 import AIQuickSetup from '../components/AIQuickSetup.jsx'
 import { t } from '../lib/i18n.js'
-import { Compass, LifeBuoy, ShieldAlert, Workflow } from 'lucide-react'
+import IntegrationsPanel from '../components/IntegrationsPanel.jsx'
+import { Compass, LifeBuoy } from 'lucide-react'
 
 function SettingsPage({ company, user }) {
   return (
@@ -18,29 +19,7 @@ function SettingsPage({ company, user }) {
         </div>
       </section>
 
-      <section className="panel settings-section">
-        <div className="settings-section-head">
-          <span className="settings-section-icon settings-integration-icon"><Workflow size={18} /></span>
-          <div><h2> {t("Connected services")} </h2><p> {t("External services remain disconnected until credentials are configured.")} </p></div>
-        </div>
-        <div className="integration-list">
-          {[
-            ['Google Calendar', t("Meetings and availability")],
-            ['Microsoft Outlook', t("Calendar and email")],
-            ['Slack', t("Notifications and escalations")],
-            ['Microsoft Teams', t("Meetings and team alerts")],
-          ].map(([name, detail]) => (
-            <div className="integration-row" key={name}>
-              <span className="integration-monogram">{name === 'Google Calendar' ? 'G' : name === 'Microsoft Outlook' ? 'O' : name === 'Slack' ? 'S' : 'T'}</span>
-              <span><strong>{name}</strong><small>{t(detail)}</small></span>
-              <span className="integration-disconnected"><i /> {t("Not connected")} </span>
-              <button className="button button-outline" disabled title={t("Configure credentials to enable this integration")}> {t("Configure")} </button>
-            </div>
-          ))}
-        </div>
-        <div className="settings-security-note">
-          <ShieldAlert size={15} /> {t("No external provider is active. Configure OAuth credentials and callback URLs before enabling a connection.")} </div>
-      </section>
+      <IntegrationsPanel />
 
       <section className="panel settings-section">
         <div className="settings-section-head">

@@ -814,3 +814,26 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .session-alternatives { display: grid; gap: 12px; margin-top: 16px; }
 .session-alternatives .button { white-space: normal; }
 .session-alternatives a { font-size: 13px; color: var(--accent, #635bff); }
+
+.integration-detail { padding: 20px; margin-bottom: 16px; background: var(--paper); border-radius: 12px; color: var(--ink); }
+.integration-form { display: grid; gap: 14px; max-width: 760px; }
+.integration-form label { display: grid; gap: 7px; font-size: 13px; }
+.integration-form input, .integration-form select, .integration-form textarea { width: 100%; border: 1px solid var(--line); padding: 10px 12px; border-radius: 8px; color: inherit; background: var(--surface, white); }
+.integration-form code { display: block; font-size: 12px; overflow-wrap: anywhere; padding: 10px; background: var(--surface, white); border-radius: 8px; user-select: text; }
+.integration-form p, .integration-form small { font-size: 13px; line-height: 1.6; }
+.integration-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.integration-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
+.integration-operations { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 20px; }
+.integration-result ul { padding: 0; list-style: none; max-height: 320px; overflow: auto; }
+.integration-result li { display: flex; gap: 12px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 10px 0; }
+.integration-result li small { display: block; overflow-wrap: anywhere; }
+@media (max-width: 680px) { .integration-form-grid { grid-template-columns: 1fr; } .integration-detail { padding: 12px; } }
+
+.integration-row > span:nth-child(2) strong { color: var(--ink); font-size: 13px; }
+.integration-row > span:nth-child(2) small { color: var(--muted); font-size: 11px; }
+.integration-row { padding: 12px 0; }
+.integration-row .button { display: inline-flex; min-height: 32px; font-size: 12px; padding: 5px 10px; }
+.integration-disconnected, .integration-connected { display: flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
+.integration-connected { color: var(--sage); }
+.integration-connected i { width: 6px; height: 6px; border-radius: 50%; background: var(--sage); }
+@media (max-width: 680px) { .integration-row { flex-wrap: wrap; } .integration-row > span:nth-child(2) { min-width: 140px; } .integration-row .button { display: inline-flex; } }

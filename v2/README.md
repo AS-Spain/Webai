@@ -230,3 +230,11 @@ NODE_ENV=production DEMO_MODE=false PORT=3002 npm start
 Express sirve la interfaz compilada y `/api` desde el mismo origen. Configura HTTPS, `APP_BASE_URL`, un volumen persistente para `v2/data/` o `V2_DB_PATH` (la demo utiliza `V2_DEMO_DB_PATH`), y las variables SMTP si corresponde. Las llamadas del navegador usan rutas relativas, nunca un `localhost` de otro servicio.
 
 La v2 sigue siendo un MVP: antes de almacenar datos reales faltan, entre otros, recuperación de contraseña, copias y restauraciones verificadas, políticas de retención, revisión de seguridad y un limitador de intentos compartido para varias instancias. Las integraciones de calendario, Slack y Teams siguen sin implementarse. Hay conectividad de IA opcional con configuración por empresa; no hay una migración automática desde v1.
+
+## Calendario, correo y mensajería con OAuth
+
+La aplicación normal permite configurar **Google Calendar, Microsoft Outlook, Slack y Microsoft Teams** desde **Configuración → Servicios conectados**. Solo los administradores conectan cuentas y ejecutan operaciones externas; la demo pública rechaza secretos y conexiones reales.
+
+Incluye OAuth con estado de un solo uso, PKCE donde está soportado, tokens cifrados, renovación, desconexión y operaciones manuales reales. Para activarlas hay que registrar una aplicación en cada proveedor, definir `APP_BASE_URL` e introducir Client ID y Client secret en el formulario privado. No hay credenciales preinstaladas.
+
+**Guía de permisos, callbacks, seguridad, despliegue y límites: [OAUTH.md](OAUTH.md).** La conexión requiere acceso saliente del servidor a los proveedores; las pruebas con proveedores simulados no verifican tus credenciales ni el consentimiento de tu organización.

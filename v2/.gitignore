@@ -14,3 +14,6 @@ ai-master.key
 # One-time initial administrator credentials (including custom database paths).
 *.bootstrap-token.local
 *.bootstrap-link.local
+
+# OAuth application credentials and external-account tokens.
+integrations-*.key
