@@ -39,7 +39,7 @@ La demo tiene su propio SQLite (`v2/data/webai-demo.sqlite` por defecto), su coo
 
 Es una demo compartida: no introduzcas datos reales ni secretos. El envío SMTP está desactivado. La configuración de IA de la demo solo admite servidores locales sin claves; las conexiones privadas y las claves de pago pertenecen a la aplicación normal. No se permite reutilizar claves antiguas guardadas en una base demo.
 
-Para funcionar también cuando el navegador bloquea cookies de terceros en la vista previa, la demo usa una sesión de prueba **solo en memoria del navegador**, que se renueva automáticamente ante una caducidad. No se guarda en localStorage/sessionStorage ni se transmite en URLs. Este mecanismo **no está habilitado en la aplicación normal**. Al recargar o cerrar sesión, se vuelve a la pantalla de perfiles. Ante un fallo permanente de autenticación se detiene tras una renovación y un reintento; puedes volver a entrar manualmente. Una renovación antigua no puede cerrar una sesión nueva.
+Para funcionar también cuando el navegador bloquea cookies de terceros en la vista previa, la demo usa una sesión de prueba **solo en memoria del navegador**, que se renueva automáticamente ante una caducidad. No se guarda en localStorage/sessionStorage ni se transmite en URLs. Este mecanismo **no está habilitado en la aplicación normal**. Al recargar o cerrar sesión, se vuelve a la pantalla de perfiles. Ante un fallo permanente de autenticación se detiene tras una renovación y un reintento; puedes volver a entrar manualmente. Una renovación antigua no puede cerrar una sesión nueva. En desarrollo, la sesión en memoria sobrevive a Fast Refresh de Vite, incluso con cookies bloqueadas; no se guarda en localStorage ni sessionStorage.
 
 ### Aplicación normal
 
@@ -58,7 +58,7 @@ Abre **http://localhost:3002** (vista previa **Northstar v2 · Aplicación norma
 - `npm run dev`: web normal **5174**, API **3002**.
 - `npm run dev:demo`: demo **5175**, API **3003**. Los archivos de datos, SQLite y secretos no se vigilan. Para una vista estable sin el cliente de desarrollo ni sus reconexiones HMR, usa `npm run build` y `npm run demo` en **3003**.
 
-Vite reenvía `/api` al backend correspondiente; el navegador nunca llama a un `localhost` remoto. No se cargan archivos `.env` automáticamente.
+El lanzador espera a que la API responda en el modo correcto antes de anunciar la URL de Vite. Vite reenvía `/api` al backend correspondiente; el navegador nunca llama a un `localhost` remoto. No se cargan archivos `.env` automáticamente.
 
 ## Crear un espacio limpio
 
@@ -71,17 +71,20 @@ export APP_BASE_URL="http://localhost:5174"
 npm run dev
 ```
 
-En el **primer inicio de la aplicación normal**, si la base aún no tiene usuarios, abre directamente **http://localhost:3002** (o la vista previa normal de Arena). El token aparece **ya cargado, con sus letras y números visibles**. No necesitas enlaces privados, terminal ni archivos. Puedes **Copiar token** para pegarlo en tu gestor de contraseñas y **Ocultar/mostrar**. El portapapeles no es un almacén seguro ni el botón guarda una copia automáticamente.
+En el **primer arranque normal**, si la base aún no tiene usuarios, el servidor genera un `BOOTSTRAP_TOKEN` aleatorio de 256 bits y lo imprime en la misma consola:
 
-**Completa el alta antes de publicar o compartir la web: el primer visitante podrá crear el administrador.** Para reducir exposiciones posteriores, el primer navegador reserva el acceso al token durante 15 minutos mediante una cookie HttpOnly y un identificador hash persistido en SQLite. Ese mismo navegador puede recargar; otro navegador no recibe el token mientras la reserva siga vigente. Al caducar puede volver a reservarse. Si el navegador bloquea todas las cookies, el primer acceso funciona pero debes completar el formulario sin recargar. Esta reserva limita el acceso: no verifica la identidad de quien llega primero ni reemplaza un control de acceso del despliegue.
+```text
+[Web]   ➜  Local: http://localhost:5174/
+[Token] ---> <token de letras y números generado por el servidor>
+```
 
-El servidor genera un `BOOTSTRAP_TOKEN` criptográfico de 256 bits y lo entrega al navegador reservado mediante `POST /api/setup/claim`, sin caché. No aparece en `/api/setup/status`, URLs, logs ni paquetes JavaScript. La interfaz lo mantiene solo en memoria, sin localStorage/sessionStorage, y borra su estado al terminar. Crea empresa, administrador, correo y contraseña; después se invalida el token, se borra la reserva y el acceso automático deja de estar disponible. La demo nunca dispone de esta función y las bases con usuarios existentes muestran el acceso normal.
+Copia el valor que sigue a `[Token] --->` y pégalo en el formulario del primer administrador, en la misma página. No hay enlaces privados, reservas del primer visitante, carga automática por HTTP ni redirecciones. El servidor no entrega el token en `/api/setup/status` ni en `/api/setup/claim`; la antigua variable `V2_SETUP_AUTO_TOKEN` ya no permite publicarlo. El primer visitante sin acceso a tu consola no puede crear el administrador.
 
-### Instalación pública con control del operador (opcional)
+**El token solo se imprime en la versión normal y mientras no exista ningún usuario.** La demo no lo genera ni lo imprime. Al completar el alta se invalida; los siguientes arranques muestran el acceso normal sin token. Si reinicias antes de terminar, se conserva en `<ruta-de-la-base>.bootstrap-token.local`, con permisos `0600` e ignorado por Git, y se vuelve a imprimir el mismo valor. Se elimina al completar el alta. Cualquier archivo de enlace de una versión anterior se elimina al consumir el token, pero no se crean nuevos enlaces.
 
-Si todavía no puedes completar el alta antes de exponer el servidor, configura **`V2_SETUP_AUTO_TOKEN=false`**. Esto desactiva la entrega automática por HTTP. En ese modo el operador puede proporcionar el token o el enlace privado desde `<ruta-de-la-base>.bootstrap-token.local` / `.bootstrap-link.local`. Los archivos tienen permisos `0600`, están excluidos de Git, sobreviven reinicios previos al alta y se eliminan al crear el administrador. El enlace alternativo lleva el token únicamente en el fragmento `#setup=...`, que la interfaz retira con `replaceState`. No compartas ese enlace ni el token en espacios públicos.
+También puedes proporcionar `BOOTSTRAP_TOKEN` desde tu gestor de secretos (al menos 32 caracteres). Tiene prioridad sobre la generación automática y se muestra en la consola con el mismo formato. Un valor explícito demasiado corto detiene el arranque. La carpeta de la base debe ser escribible por el usuario del servidor.
 
-Puedes proporcionar `BOOTSTRAP_TOKEN` desde tu gestor de secretos (al menos 32 caracteres), con prioridad sobre la generación automática. Para que solo lo conozca el operador, combínalo con `V2_SETUP_AUTO_TOKEN=false`. Un valor explícito demasiado corto detiene el arranque. La carpeta de la base debe ser escribible por el usuario del servidor. Los usuarios de la versión original **no se importan automáticamente**.
+**La salida de la consola contiene ahora una credencial de instalación, a petición del operador.** No publiques capturas de esa línea ni compartas los logs antes del alta. Copia el token a tu gestor de contraseñas si lo necesitas; el portapapeles no es un almacén seguro. Los usuarios de la versión original **no se importan automáticamente**.
 
 No se cargan archivos `.env` automáticamente. Configura las variables en la terminal o en tu plataforma de despliegue.
 

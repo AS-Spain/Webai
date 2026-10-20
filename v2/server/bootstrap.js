@@ -1,11 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import { constants, closeSync, fstatSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { privateBootstrapLink, writePrivateBootstrapLink } from './bootstrap-link.js'
 
-// A private, database-specific secret survives restarts until the first admin is
-// created. Never put it in frontend bundles or logs. The installation claim
-// route alone may deliver it to the first browser during initial setup.
+// Operator-only initial setup: the secret is printed on the server console,
+// never delivered by a public API or a private-link redirect.
 export function prepareBootstrap({ db, demo, dbPath, env = process.env, log = console.info }) {
   const file = `${path.resolve(dbPath)}.bootstrap-token.local`
   const linkFile = `${path.resolve(dbPath)}.bootstrap-link.local`
@@ -16,11 +14,8 @@ export function prepareBootstrap({ db, demo, dbPath, env = process.env, log = co
     }
   }
   const ready = (token) => {
-    writePrivateBootstrapLink(linkFile, privateBootstrapLink(env, token))
     env.BOOTSTRAP_TOKEN = token
-    log(env.V2_SETUP_AUTO_TOKEN === 'false'
-      ? `Configuración inicial en modo operador: enlace privado en ${linkFile}. No lo compartas.`
-      : 'Configuración inicial: abre la aplicación normal. El primer navegador verá automáticamente el token. Completa el alta antes de publicar o compartir la web.')
+    log(`[Token] ---> ${token}`)
     return { consume }
   }
   if (demo) return { consume() {} }

@@ -21,14 +21,11 @@ test('primer inicio: genera token aleatorio privado, estable al reiniciar y cons
   const bootstrap = prepareBootstrap(options)
   const first = env.BOOTSTRAP_TOKEN
   const linkFile = file.replace('.bootstrap-token.local', '.bootstrap-link.local')
-  assert.equal(statSync(linkFile).mode & 0o777, 0o600)
-  const link = new URL(readFileSync(linkFile, 'utf8').trim())
-  assert.equal(new URLSearchParams(link.hash.slice(1)).get('setup'), first)
-  assert.equal(link.search, '')
+  assert.equal(existsSync(linkFile), false)
   assert.match(first, /^[a-f0-9]{64}$/)
   assert.equal(readFileSync(file, 'utf8').trim(), first)
   assert.equal(statSync(file).mode & 0o777, 0o600)
-  assert.equal(messages.some((message) => message.includes(first)), false)
+  assert.deepEqual(messages, [`[Token] ---> ${first}`])
   const restartedEnv = {}
   prepareBootstrap({ ...options, env: restartedEnv })
   assert.equal(restartedEnv.BOOTSTRAP_TOKEN, first)
@@ -38,11 +35,12 @@ test('primer inicio: genera token aleatorio privado, estable al reiniciar y cons
   assert.equal(existsSync(linkFile), false)
 }))
 
-test('respeta un token manual y rechaza una configuración explícita débil', () => fixture(({ file, env, options }) => {
+test('respeta e imprime un token manual y rechaza una configuración explícita débil', () => fixture(({ file, env, options, messages }) => {
   env.BOOTSTRAP_TOKEN = 'manual-secret-'.repeat(4)
   const bootstrap = prepareBootstrap(options)
   assert.equal(env.BOOTSTRAP_TOKEN, 'manual-secret-'.repeat(4))
   assert.equal(existsSync(file), false)
+  assert.deepEqual(messages, [`[Token] ---> ${env.BOOTSTRAP_TOKEN}`])
   bootstrap.consume()
   assert.equal(env.BOOTSTRAP_TOKEN, '')
   env.BOOTSTRAP_TOKEN = 'short'

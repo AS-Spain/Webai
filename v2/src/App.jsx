@@ -9,8 +9,6 @@ import { useClock } from './hooks/useClock.js'
 import { useSearch } from './hooks/useSearch.js'
 import { useWorkspace } from './hooks/useWorkspace.js'
 import BootstrapScreen from './components/BootstrapScreen.jsx'
-import { readBootstrapFragment, scrubBootstrapFragment } from './lib/bootstrap-link.js'
-import { claimBootstrapToken } from './lib/bootstrap-claim.js'
 import ActivationScreen from './components/ActivationScreen.jsx'
 import LoginScreen from './components/LoginScreen.jsx'
 import Dashboard from './pages/Dashboard.jsx'
@@ -36,9 +34,7 @@ function App() {
   const [company, setCompany] = useState('Northstar Studio')
   const [booting, setBooting] = useState(true)
   const demoEntryPending = useRef(false)
-  const initialBootstrapToken = useRef(Boolean(readBootstrapFragment(window.location)))
-  const [bootstrapToken, setBootstrapToken] = useState(() => readBootstrapFragment(window.location))
-  useEffect(() => { scrubBootstrapFragment(window.location, window.history) }, [])
+  const [bootstrapToken, setBootstrapToken] = useState('')
 
   const [inviteToken] = useState(
     () => new URLSearchParams(window.location.search).get('invite') || ''
@@ -78,19 +74,17 @@ function App() {
         if (status.demoMode || !status.needsSetup || inviteToken) setBootstrapToken('')
         document.title = status.demoMode ? 'Northstar v2 · DEMO' : 'Northstar v2 · Aplicación normal'
         if (status.demoMode) {
-          // Display the landing page once. Only a user action can enter/re-enter.
-          setDemoSession(null)
-        } else if (inviteToken) {
+          // A fresh load waits for a click. Fast Refresh must not clear an
+          // existing in-memory session while it preserves the logged-in UI.
+          return
+        }
+        if (inviteToken) {
           setDemoSession(null)
           const info = await api(`/invitations/validate?token=${encodeURIComponent(inviteToken)}`, { signal })
           setInviteInfo(info)
         } else if (status.needsSetup) {
           setDemoSession(null)
           setAuthMode('bootstrap')
-          if (status.bootstrapEnabled && status.autoTokenEnabled && !initialBootstrapToken.current) {
-            const result = await claimBootstrapToken()
-            if (!signal.aborted) setBootstrapToken(result.bootstrapToken)
-          }
         } else {
           setDemoSession(null)
           const result = await api('/auth/me', { signal })
@@ -184,7 +178,6 @@ function App() {
       })
 
       setBootstrapToken('')
-      initialBootstrapToken.current = false
       setSetupStatus((status) => ({ ...status, needsSetup: false, bootstrapEnabled: false }))
       setAuthMode('login')
       setUser(result.user)
@@ -364,6 +357,15 @@ function App() {
       </div>
     )
   }
+
+  if (!setupStatus) return (
+    <main className="auth-layout"><section className="auth-card">
+      <h1>No se pudo conectar con Northstar</h1>
+      <p className="auth-description">El servidor todavía no está disponible. No se ha cerrado tu sesión ni cambiado de modo.</p>
+      <p className="login-error" role="alert">{error || 'Comprueba que la API esté en marcha y vuelve a intentarlo.'}</p>
+      <button className="button button-primary" onClick={() => window.location.reload()}>Reintentar conexión</button>
+    </section></main>
+  )
 
   if (!user && setupStatus?.demoMode) return <DemoWelcome onEnter={enterDemo} error={error} />
 
