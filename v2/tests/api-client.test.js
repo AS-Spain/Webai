@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { api, setDemoSession, confirmPrivateSession, startDemoSession, getDemoSessionResult, getDemoRoleHint } from '../src/lib/api.js'
+import { api, setDemoSession, confirmPrivateSession, startDemoSession, getDemoSessionResult, getDemoRoleHint, openPublicDemo, setPrivateSession, hasPrivateMemorySession } from '../src/lib/api.js'
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status })
 test('la demo renueva una sola sesión y repite las peticiones sin depender de cookies', async () => {
@@ -274,4 +274,58 @@ test('el bloqueo de almacenamiento no rompe la recuperación por cookie', () => 
     assert.equal(getDemoSessionResult().user.role, 'viewer')
     setDemoSession(null)
   } finally { globalThis.window = previousWindow; setDemoSession(null) }
+})
+
+test('la demo pública abre sin POST de login y conserva el perfil en todas las URLs', async () => {
+  const previous = globalThis.fetch
+  setDemoSession(null)
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    calls.push(url)
+    assert.equal(options.headers.Authorization, undefined)
+    if (url.includes('/auth/me')) return json({ demoMode: true, user: { role: 'viewer' }, company: 'Demo' })
+    return json({ counts: {} })
+  }
+  try {
+    const first = openPublicDemo('viewer'), second = openPublicDemo('viewer')
+    assert.equal(first, second)
+    await first
+    await api('/overview')
+    await api('/tasks?page=2')
+    assert.deepEqual(calls, ['/api/auth/me?demoRole=viewer', '/api/overview?demoRole=viewer', '/api/tasks?page=2&demoRole=viewer'])
+  } finally { globalThis.fetch = previous; setDemoSession(null) }
+})
+
+test('un fallo de API demo no pide login ni inicia un bucle de renovación', async () => {
+  const previous = globalThis.fetch
+  setDemoSession({ demoMode: true, user: { role: 'viewer' } })
+  let calls = 0
+  globalThis.fetch = async () => { calls += 1; return json({ error: 'Inicia sesión para acceder a tu espacio de trabajo.' }, 401) }
+  try {
+    await assert.rejects(api('/overview'), /demo pública/)
+    assert.equal(calls, 1)
+    assert.equal(getDemoSessionResult().user.role, 'viewer')
+  } finally { globalThis.fetch = previous; setDemoSession(null) }
+})
+
+test('la sesión privada temporal usa solo memoria y el encabezado propio', async () => {
+  const previous = globalThis.fetch, previousWindow = globalThis.window
+  const values = new Map()
+  const storage = { setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) }
+  globalThis.window = { sessionStorage: storage, localStorage: storage }
+  setDemoSession(null)
+  setPrivateSession({ sessionTransport: 'memory', sessionToken: 'private-memory-secret' })
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/auth/me')
+    assert.equal(options.headers['X-Webai-Session'], 'private-memory-secret')
+    assert.equal(options.headers.Authorization, undefined)
+    return json({ user: { id: 'private-user', role: 'member' } })
+  }
+  try {
+    assert.equal(hasPrivateMemorySession(), true)
+    assert.equal((await confirmPrivateSession('private-user')).user.id, 'private-user')
+    assert.equal(values.size, 0)
+    setPrivateSession(null)
+    assert.equal(hasPrivateMemorySession(), false)
+  } finally { globalThis.fetch = previous; globalThis.window = previousWindow; setPrivateSession(null) }
 })

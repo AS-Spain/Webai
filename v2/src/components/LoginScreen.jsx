@@ -1,7 +1,7 @@
 import { t } from '../lib/i18n.js'
 import { ArrowRight, Compass } from 'lucide-react'
 
-function LoginScreen({ onSubmit, error }) {
+function LoginScreen({ onSubmit, error, cookieUnavailable, pending }) {
   return (
     <main className="login-layout">
       <section className="login-story">
@@ -48,8 +48,14 @@ function LoginScreen({ onSubmit, error }) {
 
           {error && <div className="login-error" role="alert">{error}</div>}
 
-          <button className="button button-primary login-submit" type="submit"> {t("Continue")} <ArrowRight size={16} />
+          <button className="button button-primary login-submit" type="submit" disabled={pending}> {pending ? 'Comprobando…' : t("Continue")} <ArrowRight size={16} />
           </button>
+
+          {cookieUnavailable && <div className="session-alternatives">
+            <button className="button button-outline" type="submit" name="sessionTransport" value="memory" disabled={pending}>Entrar sin cookies (sesión temporal)</button>
+            <p className="auth-footnote">Solo dura en esta página. Si recargas, volverás a introducir tus credenciales.</p>
+            <a href={window.location.href} target="_blank" rel="noopener noreferrer">Abrir la aplicación en una pestaña propia</a>
+          </div>}
 
           <div className="login-foot">
             <span> {t("Protected workspace")} </span>

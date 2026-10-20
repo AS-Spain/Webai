@@ -61,3 +61,25 @@ test('una renovación pendiente también se comparte entre versiones HMR', async
     next.setDemoSession(null)
   } finally { globalThis.fetch = previousFetch; delete globalThis.__webaiTestHot }
 })
+
+test('la sesión privada temporal sobrevive a HMR y los callbacks antiguos respetan el logout', async () => {
+  const previousFetch = globalThis.fetch
+  globalThis.__webaiTestHot = { data: {} }
+  try {
+    const first = await loadVersion()
+    first.setPrivateSession({ sessionTransport: 'memory', sessionToken: 'temporary-before' })
+    const next = await loadVersion()
+    globalThis.fetch = async (url, options) => {
+      assert.equal(options.headers['X-Webai-Session'], 'temporary-before')
+      assert.equal(options.headers.Authorization, undefined)
+      return json({ ok: true })
+    }
+    assert.equal((await next.api('/overview')).ok, true)
+    next.setPrivateSession(null)
+    globalThis.fetch = async (url, options) => {
+      assert.equal(options.headers['X-Webai-Session'], undefined)
+      return json({ ok: true })
+    }
+    assert.equal((await first.api('/overview')).ok, true)
+  } finally { globalThis.fetch = previousFetch; delete globalThis.__webaiTestHot }
+})

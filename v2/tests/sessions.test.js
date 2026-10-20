@@ -14,7 +14,7 @@ function database(file = ':memory:') {
     INSERT OR IGNORE INTO users VALUES ('user');`)
   return db
 }
-const session = () => ({ userId: 'user', tenantId: 'tenant', expiresAt: Date.now() + 60_000 })
+const session = () => ({ userId: 'user', tenantId: 'tenant', expiresAt: Date.now() + 60_000, transport: 'cookie' })
 
 test('las sesiones sobreviven al cierre y reapertura de SQLite', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'northstar-session-'))
@@ -56,5 +56,22 @@ test('caducidad y desactivación revocan las sesiones', () => {
     assert.equal(store.get('first'), undefined)
     assert.equal(store.get('second'), undefined)
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 0)
+  } finally { db.close() }
+})
+
+test('la migración conserva las sesiones antiguas como cookies y distingue las temporales', () => {
+  const db = database()
+  try {
+    db.exec(`CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, tenant_id TEXT NOT NULL, expires_at INTEGER NOT NULL)`)
+    // Reuse a hashed row from a current store to simulate an old schema.
+    const store = new SessionStore(db)
+    store.set('legacy', session())
+    db.exec('ALTER TABLE sessions DROP COLUMN transport')
+    const migrated = new SessionStore(db)
+    assert.equal(migrated.get('legacy').transport, 'cookie')
+    migrated.set('temporary', { ...session(), transport: 'memory' })
+    assert.equal(migrated.get('temporary').transport, 'memory')
+    assert.equal(migrated.get('legacy').userId, 'user')
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 2)
   } finally { db.close() }
 })

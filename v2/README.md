@@ -33,13 +33,13 @@ npm run build
 npm run demo
 ```
 
-Abre **http://localhost:3003** (en Arena, la vista previa **Northstar v2 · Demo**, puerto **3003**). La primera vez elige un perfil y entra con un clic, sin correo ni contraseña. En los siguientes accesos se recupera la sesión válida al recargar; no se vuelve a pedir entrar innecesariamente. La franja **DEMO · Datos de ejemplo** permite cambiar entre administrador, gestor, miembro y solo lectura. Si sales, podrás volver a entrar con un clic.
+Abre **http://localhost:3003** (vista previa del puerto **3003**) o usa `npm run dev:demo` para la web en **5175**. **La demo es pública y abre directamente, sin pantalla de inicio de sesión, contraseñas, cookies ni tokens.** El perfil inicial es administrador de ejemplo. La franja **DEMO · Datos de ejemplo** permite cambiar a gestor, miembro o solo lectura; la API aplica los permisos del perfil elegido. No hay botón de cerrar sesión en una demo pública.
 
-La demo tiene su propio SQLite (`v2/data/webai-demo.sqlite` por defecto), su cookie `webai_v2_demo_session` y su variable `V2_DEMO_DB_PATH`. **Ignora `V2_DB_PATH`** para no abrir accidentalmente una base privada. Se rechaza configurar ambos modos con la misma ruta de SQLite. La base guarda además su modo: no se permite abrir una base privada como demo ni una base con usuarios de ejemplo como aplicación normal, aunque se cambie su ruta o se utilice un alias.
+El perfil se envía como parámetro público `demoRole` (no es una credencial). Solo su nombre puede recordarse en sessionStorage; si se bloquea también el almacenamiento, la demo sigue abriendo como administrador de ejemplo. La carga y recarga no crean sesiones en SQLite. Los endpoints de entrada de versiones anteriores se mantienen por compatibilidad, pero la interfaz no los necesita.
 
-Es una demo compartida: no introduzcas datos reales ni secretos. El envío SMTP está desactivado. La configuración de IA de la demo solo admite servidores locales sin claves; las conexiones privadas y las claves de pago pertenecen a la aplicación normal. No se permite reutilizar claves antiguas guardadas en una base demo.
+La demo tiene su propio SQLite (`v2/data/webai-demo.sqlite` por defecto), cookie heredada `webai_v2_demo_session` y variable `V2_DEMO_DB_PATH`. **Ignora `V2_DB_PATH`** para no abrir una base privada; se rechaza mezclar las bases o cambiar una base privada al modo demo. El parámetro `demoRole` no autentica ni cambia permisos en el modo normal.
 
-Para funcionar también cuando el navegador bloquea cookies de terceros en la vista previa, la demo usa una sesión de prueba **solo en memoria del navegador**, que se renueva automáticamente ante una caducidad. El token no se guarda en localStorage/sessionStorage ni se transmite en URLs. Este mecanismo **no está habilitado en la aplicación normal**. Al recargar se recupera la sesión de la cookie. Si las cookies están bloqueadas, la demo recuerda únicamente el nombre del perfil público en sessionStorage y puede recuperarlo una sola vez por carga; nunca guarda el token. Al cerrar sesión se elimina también esa preferencia y se vuelve al selector de perfiles. Ante un fallo permanente de autenticación se detiene tras una renovación y un reintento; puedes volver a entrar manualmente. Una renovación antigua no puede cerrar una sesión nueva. En desarrollo, la sesión en memoria sobrevive a Fast Refresh de Vite, incluso con cookies bloqueadas; no se guarda en localStorage ni sessionStorage.
+**No introduzcas datos reales ni secretos:** cualquiera puede acceder a esta demo compartida. SMTP está desactivado y la IA solo admite servidores locales sin claves. Las conexiones privadas y claves de pago pertenecen al modo normal.
 
 ### Aplicación normal
 
@@ -62,9 +62,13 @@ El lanzador espera a que la API responda en el modo correcto antes de anunciar l
 
 ### Persistencia del acceso
 
-La aplicación normal mantiene la sesión en una cookie **HttpOnly** y SQLite, con caducidad de ocho horas. Tras entrar, crear el administrador o aceptar una invitación, el cliente comprueba `/api/auth/me` antes de mostrar datos privados. Si el navegador rechaza la cookie, muestra el motivo en el formulario en vez de simular un acceso y expulsarte después. No hay tokens privados en almacenamiento del navegador ni una recuperación automática de credenciales.
+La aplicación normal usa por defecto una cookie **HttpOnly** y sesiones SQLite, con caducidad de ocho horas. Tras entrar, crear el administrador o aceptar una invitación se comprueba `/api/auth/me` antes de mostrar datos. El servidor reconoce también HTTPS y el dominio público reenviados por proxies, aunque estos sustituyan Host. En producción debe usarse HTTPS.
 
-Las respuestas 401 no borran cookies: una respuesta antigua no debe eliminar la cookie de un login posterior. El cierre de sesión explícito sí revoca la sesión y elimina la cookie. En la vista previa se limpian además las cookies Strict de versiones anteriores al crear o cerrar una sesión. Si se bloquean incluso las cookies particionadas, usa una pestaña propia o permite cookies; en producción es necesario HTTPS.
+Si la vista previa no conserva cookies, el formulario ofrece **Entrar sin cookies (sesión temporal)** y **Abrir la aplicación en una pestaña propia**. La primera opción es explícita: vuelve a validar correo y contraseña, crea una sesión ligada al transporte temporal y envía su identificador por `X-Webai-Session`. El identificador **solo vive en memoria**, también durante HMR; jamás se guarda en localStorage/sessionStorage ni en URLs. **Al recargar o cerrar la página hay que entrar de nuevo** en este modo. La interfaz lo avisa permanentemente. No se degrada automáticamente una sesión HttpOnly a una sesión accesible por JavaScript.
+
+Las sesiones temporales exigen las mismas credenciales, permisos y aislamiento de empresa. Un token de cookie no sirve como sesión temporal, ni al revés; `Authorization: Bearer` sigue sin autenticar usuarios normales. La API devuelve el token temporal únicamente tras un login válido que solicita ese transporte, no en el login predeterminado, bootstrap, invitaciones o `/auth/me`. Caducidad, desactivación y logout revocan estas sesiones igual que las cookies.
+
+Las respuestas de autenticación no se cachean. Los 401 tardíos no borran cookies de un login posterior; el logout explícito sí revoca la sesión y elimina la cookie. La migración conserva las sesiones antiguas como transporte cookie y no elimina cuentas ni datos.
 
 ## Crear un espacio limpio
 

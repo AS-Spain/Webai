@@ -52,6 +52,24 @@ test('demo separada: entrada sin contraseña, cookies bloqueadas y protección d
       assert.equal((await request('/setup/status')).body.demoMode, true)
       assert.equal((await request('/setup/claim', { method: 'POST', body: {} })).status, 404)
     })
+    await suite.test('la demo abre directamente y no crea sesiones ni necesita tokens', async () => {
+      const result = await request('/auth/me')
+      assert.equal(result.status, 200)
+      assert.equal(result.body.user.role, 'admin')
+      assert.equal(result.body.demoMode, true)
+      assert.equal(result.body.sessionToken, undefined)
+      assert.equal(result.headers.get('set-cookie'), null)
+      assert.equal((await request('/overview')).status, 200)
+      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 0)
+    })
+    await suite.test('los perfiles públicos conservan permisos sin cookies ni Authorization', async () => {
+      const viewer = await request('/auth/me?demoRole=viewer')
+      assert.equal(viewer.body.user.role, 'viewer')
+      assert.equal((await request('/overview?demoRole=viewer')).status, 200)
+      assert.equal((await request('/tasks?demoRole=viewer', { method: 'POST', body: {} })).status, 403)
+      assert.equal((await request('/ai/config?demoRole=member', { method: 'PUT', body: {} })).status, 403)
+      for (const query of ['__proto__', 'wrong', 'viewer&demoRole=admin']) assert.equal((await request(`/overview?demoRole=${query}`)).status, 400)
+    })
     await suite.test('entra como admin de prueba sin cookies ni contraseña', async () => {
       const result = await request('/auth/demo', { method: 'POST', body: { role: 'admin' } })
       assert.equal(result.status, 200)
@@ -61,15 +79,15 @@ test('demo separada: entrada sin contraseña, cookies bloqueadas y protección d
       assert.ok(token.length >= 32)
       const restored = await request('/auth/me', { cookie: `webai_v2_demo_session=${token}` })
       assert.equal(restored.status, 200)
-      assert.equal(restored.body.sessionToken, token)
+      assert.equal(restored.body.sessionToken, undefined)
       assert.equal(restored.body.demoMode, true)
       assert.equal((await request('/overview', { token })).status, 200)
-      assert.equal((await request('/overview', { cookie: `webai_v2_session=${token}` })).status, 401)
+      assert.equal((await request('/overview', { cookie: `webai_v2_session=${token}` })).status, 200)
     })
-    await suite.test('una sesión caducada se puede sustituir sin pedir una contraseña', async () => {
+    await suite.test('una cookie caducada nunca impide abrir los datos públicos', async () => {
       db.prepare('UPDATE sessions SET expires_at = 0').run()
       const expired = await request('/overview', { token })
-      assert.equal(expired.status, 401)
+      assert.equal(expired.status, 200)
       assert.equal(expired.headers.get('set-cookie'), null)
       const result = await request('/auth/demo', { method: 'POST', body: { role: 'admin' } })
       token = result.body.sessionToken
@@ -100,10 +118,10 @@ test('demo separada: entrada sin contraseña, cookies bloqueadas y protección d
       }
       assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ai_settings').get().n, 0)
     })
-    await suite.test('el logout revoca la sesión de demo y el bootstrap privado está bloqueado', async () => {
+    await suite.test('los clientes antiguos pueden salir pero la demo continúa siendo pública', async () => {
       assert.equal((await request('/setup/bootstrap', { method: 'POST', body: {} })).status, 403)
       assert.equal((await request('/auth/logout', { token, method: 'POST' })).status, 204)
-      assert.equal((await request('/overview', { token })).status, 401)
+      assert.equal((await request('/overview', { token })).status, 200)
     })
   } finally {
     await new Promise((resolve) => server.close(resolve))

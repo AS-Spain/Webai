@@ -1,19 +1,19 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import { SessionStore } from './sessions.js'
+import { cookiePolicy } from './cookies.js'
 
 export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap) {
   const sessions = new SessionStore(db)
   const loginAttempts = new Map()
   const sessionCookie = demoMode ? 'webai_v2_demo_session' : 'webai_v2_private_session'
   const readSession = (req) => {
-    // Memory-only bearer sessions are exclusive to the public demo. Normal users use HttpOnly cookies.
+    // Legacy Authorization bearer is demo-only. Explicit temporary private
+    // credentials are checked separately and bound to their transport.
     if (demoMode && req.headers.authorization?.startsWith('Bearer ')) return req.headers.authorization.slice(7)
     return req.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${sessionCookie}=`))?.slice(sessionCookie.length + 1)
   }
-  const isPreview = (req) => /^[a-z0-9-]+\.e2b\.app$/i.test((req.get('host') || '').split(':')[0])
-  const cookieAttributes = (req) => {
-    return isPreview(req) ? '; Secure; SameSite=None; Partitioned' : `; SameSite=Strict${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
-  }
+  const isPreview = (req) => cookiePolicy(req).partitioned
+  const cookieAttributes = (req) => cookiePolicy(req).attributes
   const clearLegacyCookie = (req, res) => {
     if (isPreview(req)) res.append('Set-Cookie', `${sessionCookie}=; HttpOnly; Path=/; Max-Age=0; Secure; SameSite=Strict`)
   }
@@ -30,10 +30,15 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
     res.append('Set-Cookie', `${sessionCookie}=${sessionId}; HttpOnly; Path=/; Max-Age=${sessionDuration / 1000}${cookieAttributes(req)}`)
   }
 
-  function establishSession(req, res, user) {
+  function establishSession(req, res, user, transport = 'cookie') {
     const sessionId = randomBytes(32).toString('hex')
-    sessions.set(sessionId, { userId: user.id, tenantId: user.tenant_id, expiresAt: Date.now() + sessionDuration })
-    setSessionCookie(req, res, sessionId)
+    sessions.set(sessionId, { userId: user.id, tenantId: user.tenant_id, expiresAt: Date.now() + sessionDuration, transport })
+    if (transport === 'memory') {
+      const previous = readSession(req)
+      if (previous && sessions.get(previous)?.transport === 'cookie') sessions.delete(previous)
+      clearCookie(req, res)
+      res.locals.privateSessionToken = sessionId
+    } else setSessionCookie(req, res, sessionId)
     if (demoMode) res.locals.demoSessionToken = sessionId
     return { id: user.id, name: user.name, email: user.email, role: user.role }
   }
@@ -193,12 +198,17 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
       return res.status(401).json({ error: 'Correo o contraseña incorrectos.' })
     }
 
+    const transport = req.body?.sessionTransport || 'cookie'
+    if (!['cookie', 'memory'].includes(transport)) return res.status(400).json({ error: 'Tipo de sesión no válido.' })
     loginAttempts.delete(address)
-    const publicUser = establishSession(req, res, user)
-    return res.json({ user: publicUser, company: db.prepare('SELECT name FROM tenants WHERE id = ?').get(user.tenant_id).name })
+    const publicUser = establishSession(req, res, user, transport)
+    return res.json({ user: publicUser, company: db.prepare('SELECT name FROM tenants WHERE id = ?').get(user.tenant_id).name,
+      ...(transport === 'memory' ? { sessionTransport: 'memory', sessionToken: res.locals.privateSessionToken } : {}) })
   })
 
   app.post('/api/auth/logout', (req, res) => {
+    const memory = req.get('x-webai-session')
+    if (memory && sessions.get(memory)?.transport === 'memory') sessions.delete(memory)
     const sessionId = readSession(req)
     if (sessionId) sessions.delete(sessionId)
     clearCookie(req, res)
@@ -206,10 +216,28 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
   })
 
   function authenticate(req, res, next) {
-    const sessionId = readSession(req)
+    if (demoMode) {
+      // Public synthetic data only. The profile is not an authentication secret.
+      const accounts = { admin: 'ava@northstar.io', manager: 'olivia@northstar.io', member: 'marcus@northstar.io', viewer: 'jonah@northstar.io' }
+      let role = req.query.demoRole
+      if (role === undefined) {
+        // Compatibility with older demo clients; never require their credential.
+        const legacy = readSession(req)
+        const session = legacy && sessions.get(legacy)
+        role = session && db.prepare('SELECT role FROM users WHERE id = ?').get(session.userId)?.role || 'admin'
+      }
+      if (typeof role !== 'string' || !Object.hasOwn(accounts, role)) return res.status(400).json({ error: 'Perfil demo no válido.' })
+      const user = db.prepare("SELECT id, tenant_id, name, email, role, status FROM users WHERE email = ? AND tenant_id = 'tenant-northstar' AND status = 'active' AND role = ?").get(accounts[role], role)
+      if (!user) return res.status(409).json({ error: 'Ese perfil de ejemplo no está disponible.' })
+      req.user = user
+      req.tenantId = user.tenant_id
+      return next()
+    }
+    const memory = req.get('x-webai-session')
+    const sessionId = memory || readSession(req)
     const session = sessionId && sessions.get(sessionId)
-    if (!session || session.expiresAt <= Date.now()) {
-      if (sessionId) sessions.delete(sessionId)
+    if (!session || session.expiresAt <= Date.now() || session.transport !== (memory ? 'memory' : 'cookie')) {
+      if (sessionId && session?.expiresAt <= Date.now()) sessions.delete(sessionId)
       // Never clear cookies on a late 401: it could erase a newer login.
       return res.status(401).json({ code: sessionId ? 'SESSION_EXPIRED' : 'AUTH_REQUIRED', error: sessionId ? 'Tu sesión ha caducado. Inicia sesión de nuevo.' : 'Inicia sesión para acceder a tu espacio de trabajo.' })
     }
@@ -220,10 +248,10 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
       return res.status(401).json({ error: 'Tu cuenta está desactivada. Contacta con un administrador.' })
     }
     req.user = user
-    req.sessionToken = sessionId
     req.tenantId = session.tenantId
     next()
   }
+
 
 
   return { authenticate, sessions, userByEmail, validEmail, hashToken }

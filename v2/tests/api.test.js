@@ -17,10 +17,10 @@ const server = app.listen(0, '127.0.0.1')
 await new Promise((resolve) => server.once('listening', resolve))
 const base = `http://127.0.0.1:${server.address().port}/api`
 
-async function request(route, { cookie, body, token, method = 'GET' } = {}) {
+async function request(route, { cookie, body, token, headers = {}, method = 'GET' } = {}) {
   const response = await fetch(`${base}${route}`, {
     method,
-    headers: { ...(cookie ? { Cookie: cookie } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    headers: { ...(cookie ? { Cookie: cookie } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json', ...headers },
     ...(body ? { body: JSON.stringify(body) } : {}),
   })
   return { status: response.status, body: await response.json().catch(() => null), cookie: response.headers.get('set-cookie')?.split(';')[0], headers: response.headers }
@@ -68,6 +68,43 @@ test('API v2: autenticación, permisos, empresas e invitaciones', async (suite) 
     await suite.test('las credenciales inválidas no permiten entrar', async () => {
       assert.equal((await request('/auth/login', { method: 'POST', body: { email: 'admin@example.com', password: 'incorrect' } })).status, 401)
       assert.equal((await request('/auth/me', { cookie: 'webai_session=original-cookie' })).status, 401)
+    })
+    await suite.test('HTTPS reenviado conserva la cookie particionada aunque Host sea local', async () => {
+      const result = await request('/auth/login', { method: 'POST', body: { email: 'admin@example.com', password: 'a-strong-password' }, headers: { 'X-Forwarded-Proto': 'https', 'X-Forwarded-Host': '5174-test.e2b.app' } })
+      assert.equal(result.status, 200)
+      const cookie = result.headers.getSetCookie().at(-1)
+      assert.match(cookie, /HttpOnly/)
+      assert.match(cookie, /Secure; SameSite=None; Partitioned/)
+      assert.equal(result.body.sessionToken, undefined)
+    })
+    await suite.test('el perfil público demo y los encabezados inventados no abren la aplicación normal', async () => {
+      for (const route of ['/auth/me?demoRole=admin', '/overview?demoRole=admin']) {
+        assert.equal((await request(route)).status, 401)
+        assert.equal((await request(route, { headers: { 'X-Webai-Session': 'invented' } })).status, 401)
+      }
+      assert.equal((await request('/auth/me', { headers: { 'X-Webai-Session': admin.split('=')[1] } })).status, 401)
+    })
+    await suite.test('el modo temporal requiere contraseña y respeta permisos, transporte y revocación', async () => {
+      const body = { email: 'member@example.com', password: 'a-strong-password', sessionTransport: 'memory' }
+      assert.equal((await request('/auth/login', { method: 'POST', body: { ...body, password: 'wrong' } })).status, 401)
+      const previousCookie = await login('member')
+      const result = await request('/auth/login', { method: 'POST', body, cookie: previousCookie })
+      assert.equal(result.status, 200)
+      assert.equal((await request('/auth/me', { cookie: previousCookie })).status, 401)
+      assert.equal(result.body.sessionTransport, 'memory')
+      assert.ok(result.body.sessionToken.length >= 32)
+      assert.match(result.headers.get('set-cookie'), /Max-Age=0/)
+      const token = result.body.sessionToken, headers = { 'X-Webai-Session': token }
+      const verified = await request('/auth/me', { headers })
+      assert.equal(verified.body.user.role, 'member')
+      assert.equal(verified.body.sessionToken, undefined)
+      assert.equal(verified.headers.get('cache-control'), 'no-store')
+      assert.equal((await request('/auth/me', { cookie: `webai_v2_private_session=${token}` })).status, 401)
+      assert.equal((await request('/auth/me', { token })).status, 401)
+      assert.equal((await request('/overview?demoRole=admin', { headers })).status, 200)
+      assert.equal((await request('/ai/config?demoRole=admin', { method: 'PUT', headers, body: {} })).status, 403)
+      assert.equal((await request('/auth/logout', { method: 'POST', headers })).status, 204)
+      assert.equal((await request('/overview', { headers })).status, 401)
     })
     await suite.test('roles de escritura, borrado y administración', async () => {
       const projectBody = { name: 'Proyecto A', owner: 'manager', due_date: '2026-11-01' }

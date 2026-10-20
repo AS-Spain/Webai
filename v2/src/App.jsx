@@ -3,8 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { ArrowRight, Bell, CheckCircle2, ChevronDown, CircleHelp, Command, Compass, LogOut, Menu, Plus, Search, Settings2, ShieldAlert, Sparkles, Users, X } from 'lucide-react'
 import { navGroups, pageMeta, can } from './lib/config.js'
 import { formatDate, initials } from './lib/format.js'
-import DemoWelcome from './components/DemoWelcome.jsx'
-import { api, setDemoSession, getDemoRoleHint, getDemoSessionResult, startDemoSession, confirmPrivateSession } from './lib/api.js'
+import { api, setDemoSession, getDemoRoleHint, getDemoSessionResult, openPublicDemo, confirmPrivateSession, setPrivateSession, hasPrivateMemorySession } from './lib/api.js'
 import { useClock } from './hooks/useClock.js'
 import { useSearch } from './hooks/useSearch.js'
 import { useWorkspace } from './hooks/useWorkspace.js'
@@ -34,6 +33,9 @@ function App() {
   const [company, setCompany] = useState('Northstar Studio')
   const [booting, setBooting] = useState(true)
   const demoEntryPending = useRef(false)
+  const [privateTemporary, setPrivateTemporary] = useState(hasPrivateMemorySession)
+  const [cookieUnavailable, setCookieUnavailable] = useState(false)
+  const [authPending, setAuthPending] = useState(false)
   const [bootstrapToken, setBootstrapToken] = useState('')
 
   const [inviteToken] = useState(
@@ -74,23 +76,10 @@ function App() {
         if (status.demoMode || !status.needsSetup || inviteToken) setBootstrapToken('')
         document.title = status.demoMode ? 'Northstar v2 · DEMO' : 'Northstar v2 · Aplicación normal'
         if (status.demoMode) {
+          if (hasPrivateMemorySession()) setPrivateSession(null)
+          setPrivateTemporary(false)
           let result = getDemoSessionResult()
-          if (!result) {
-            const role = getDemoRoleHint()
-            try {
-              result = await api('/auth/me', { signal })
-              if (signal.aborted) return
-              // Another tab may have selected a different profile on its cookie.
-              if (role && result.user.role !== role) result = await startDemoSession(role)
-              else setDemoSession(result)
-            } catch (requestError) {
-              if (signal.aborted) return
-              if (requestError.status !== 401) throw requestError
-              if (!role) return
-              // Public demo only: one restoration attempt for the selected role.
-              result = await startDemoSession(role)
-            }
-          }
+          if (!result || result.sessionToken) result = await openPublicDemo(getDemoRoleHint() || result?.user.role || 'admin')
           if (!signal.aborted) { setUser(result.user); setCompany(result.company) }
           return
         }
@@ -118,6 +107,8 @@ function App() {
   useEffect(() => {
     const expired = (event) => {
       setDemoSession(null)
+      setPrivateSession(null)
+      setPrivateTemporary(false)
       setUser(null)
       setModal('')
       setActivityOpen(false)
@@ -136,7 +127,7 @@ function App() {
     setBooting(true)
     setError('')
     try {
-      const result = await startDemoSession(role)
+      const result = await openPublicDemo(role)
       setModal('')
       setActivityOpen(false)
       setSearch('')
@@ -157,7 +148,11 @@ function App() {
 
   async function signIn(event) {
     event.preventDefault()
+    if (authPending) return
+    const transport = event.nativeEvent.submitter?.value === 'memory' ? 'memory' : 'cookie'
     setError('')
+    setAuthPending(true)
+    setPrivateSession(null)
 
     try {
       const form = new FormData(event.currentTarget)
@@ -167,17 +162,23 @@ function App() {
         body: JSON.stringify({
           email: form.get('email'),
           password: form.get('password'),
+          sessionTransport: transport,
         }),
       })
 
+      if (result.sessionTransport === 'memory') setPrivateSession(result)
       const verified = await confirmPrivateSession(result.user.id)
+      setPrivateTemporary(hasPrivateMemorySession())
+      setCookieUnavailable(false)
       setUser(verified.user)
       setAuthMode('login')
       setCompany(verified.company)
 
     } catch (requestError) {
+      setPrivateSession(null)
+      if (requestError.code === 'COOKIE_UNCONFIRMED') setCookieUnavailable(true)
       setError(requestError.message)
-    }
+    } finally { setAuthPending(false) }
   }
 
   async function bootstrapWorkspace(event) {
@@ -199,6 +200,7 @@ function App() {
       setUser(verified.user)
       setCompany(verified.company)
     } catch (requestError) {
+      if (requestError.code === 'COOKIE_UNCONFIRMED') setCookieUnavailable(true)
       setError(requestError.message)
     }
   }
@@ -226,6 +228,7 @@ function App() {
       setCompany(verified.company)
 
     } catch (requestError) {
+      if (requestError.code === 'COOKIE_UNCONFIRMED') setCookieUnavailable(true)
       setError(requestError.message)
     }
   }
@@ -233,6 +236,9 @@ function App() {
   async function signOut() {
     await api('/auth/logout', { method: 'POST' }).catch(() => {})
     setDemoSession(null)
+    setPrivateSession(null)
+    setPrivateTemporary(false)
+    setCookieUnavailable(false)
     setUser(null)
     setAuthMode('login')
     setInviteUrl('')
@@ -384,7 +390,12 @@ function App() {
     </section></main>
   )
 
-  if (!user && setupStatus?.demoMode) return <DemoWelcome onEnter={enterDemo} error={error} />
+  if (!user && setupStatus?.demoMode) return <main className="auth-layout"><section className="auth-card">
+    <h1>No se pudo abrir la demo</h1>
+    <p className="auth-description">La demo es pública y no requiere iniciar sesión.</p>
+    <p className="login-error" role="alert">{error || 'Comprueba que la API demo esté disponible.'}</p>
+    <button className="button button-primary" onClick={() => enterDemo(getDemoRoleHint() || 'admin')}>Reintentar demo</button>
+  </section></main>
 
   if (!user && authMode === 'bootstrap') {
     return (
@@ -418,10 +429,13 @@ function App() {
       <LoginScreen
         onSubmit={signIn}
         error={error}
+        cookieUnavailable={cookieUnavailable}
+        pending={authPending}
       />
     )
   }
 
+  const ProfileTag = setupStatus?.demoMode ? 'div' : 'button'
   const meta = pageMeta[page] || pageMeta.dashboard
   const createTarget = page === 'dashboard'
     ? 'tasks'
@@ -525,14 +539,14 @@ function App() {
             </div>
           </div>
 
-          <button className="profile-button" onClick={signOut} title="Cerrar sesión">
+          <ProfileTag className="profile-button" onClick={setupStatus.demoMode ? undefined : signOut} title={setupStatus.demoMode ? 'Perfil de ejemplo' : 'Cerrar sesión'}>
             <span className="avatar avatar-coral">{initials(user.name)}</span>
             <span className="profile-copy">
               <strong>{user.name}</strong>
               <small>{t(user.role)}</small>
             </span>
-            <LogOut size={15} />
-          </button>
+            {!setupStatus.demoMode && <LogOut size={15} />}
+          </ProfileTag>
         </div>
       </aside>
 
@@ -618,7 +632,8 @@ function App() {
           </div>
         </header>
 
-        {setupStatus?.demoMode && <div className="demo-banner" role="region" aria-label="Entorno de demostración">
+        {privateTemporary && !setupStatus?.demoMode && <div className="demo-banner" role="status"><span><strong>Sesión temporal sin cookies.</strong> Al recargar o cerrar esta pestaña tendrás que iniciar sesión de nuevo. No se guarda tu contraseña ni el token.</span></div>}
+      {setupStatus?.demoMode && <div className="demo-banner" role="region" aria-label="Entorno de demostración">
           <span><strong>DEMO · Datos de ejemplo</strong> Separada de la web normal. No introduzcas datos reales ni claves.</span>
           <label>Perfil de prueba
             <select aria-label="Perfil de prueba" value={user.role} onChange={(event) => enterDemo(event.target.value)}>
