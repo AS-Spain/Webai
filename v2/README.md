@@ -39,7 +39,7 @@ El perfil se envía como parámetro público `demoRole` (no es una credencial). 
 
 La demo tiene su propio SQLite (`v2/data/webai-demo.sqlite` por defecto), cookie heredada `webai_v2_demo_session` y variable `V2_DEMO_DB_PATH`. **Ignora `V2_DB_PATH`** para no abrir una base privada; se rechaza mezclar las bases o cambiar una base privada al modo demo. El parámetro `demoRole` no autentica ni cambia permisos en el modo normal.
 
-**No introduzcas datos reales ni secretos:** cualquiera puede acceder a esta demo compartida. SMTP está desactivado y la IA solo admite servidores locales sin claves. Las conexiones privadas y claves de pago pertenecen al modo normal.
+**No introduzcas datos reales ni secretos:** cualquiera puede acceder a esta demo compartida. SMTP, las invitaciones y las cuentas reales están desactivados. El acceso de la demo a servidores de modelos está bloqueado por defecto; solo el operador puede autorizarlo con `V2_DEMO_AI_ENABLED=true`, exclusivamente para modelos locales sin claves y con límites compartidos. Las conexiones privadas y claves de pago pertenecen al modo normal.
 
 ### Aplicación normal
 
@@ -223,13 +223,13 @@ export SMTP_FROM="Northstar Work <mailer@example.com>"
 ```sh
 cd v2
 npm ci
-npm run build
-NODE_ENV=production DEMO_MODE=false PORT=3002 npm start
+NODE_ENV=production npm run build
+NODE_ENV=production APP_BASE_URL="https://tu-v2.example.com" V2_REQUEST_LOGS=true PORT=3002 npm start
 ```
 
 Express sirve la interfaz compilada y `/api` desde el mismo origen. Configura HTTPS, `APP_BASE_URL`, un volumen persistente para `v2/data/` o `V2_DB_PATH` (la demo utiliza `V2_DEMO_DB_PATH`), y las variables SMTP si corresponde. Las llamadas del navegador usan rutas relativas, nunca un `localhost` de otro servicio.
 
-La v2 sigue siendo un MVP: antes de almacenar datos reales faltan, entre otros, recuperación de contraseña, copias y restauraciones verificadas, políticas de retención, revisión de seguridad y un limitador de intentos compartido para varias instancias. Las integraciones de calendario, Slack y Teams siguen sin implementarse. Hay conectividad de IA opcional con configuración por empresa; no hay una migración automática desde v1.
+La v2 dispone de integraciones OAuth **manuales** de calendario, Slack y Teams y de IA compartida administrada. No hay sincronización ni ejecución de reglas en segundo plano. Se han incorporado límites persistentes en SQLite, controles CSRF, aislamiento probado, protección de archivos privados y una herramienta de copia verificada. No hay migración automática desde v1, recuperación de contraseña autoservicio, MFA ni límites de concurrencia distribuidos. Antes de datos reales, completa las condiciones operativas y de seguridad de la [auditoría de producción](PRODUCTION_READINESS.md).
 
 ## Calendario, correo y mensajería con OAuth
 
@@ -238,3 +238,17 @@ La aplicación normal permite configurar **Google Calendar, Microsoft Outlook, S
 Incluye OAuth con estado de un solo uso, PKCE donde está soportado, tokens cifrados, renovación, desconexión y operaciones manuales reales. Para activarlas hay que registrar una aplicación en cada proveedor, definir `APP_BASE_URL` e introducir Client ID y Client secret en el formulario privado. No hay credenciales preinstaladas.
 
 **Guía de permisos, callbacks, seguridad, despliegue y límites: [OAUTH.md](OAUTH.md).** La conexión requiere acceso saliente del servidor a los proveedores; las pruebas con proveedores simulados no verifican tus credenciales ni el consentimiento de tu organización.
+
+
+## Endurecimiento y operación
+
+Consulta [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) para hallazgos por gravedad, resultados reales, variables, instalación, límites y veredicto. Node **>=22.12**, Python 3, compilador C/C++ y cabeceras de Node compatibles para `better-sqlite3`.
+
+- Usa `.env.example` solo como plantilla **sin secretos**. Node no carga `.env` automáticamente: expórtalo desde el shell o desde tu gestor de procesos/secretos.
+- **No publiques Vite en producción.** Solo `dist/` servido por Express detrás de HTTPS; nunca `data/`, el repositorio completo ni `node_modules/`.
+- Una vulnerabilidad crítica de la vista de desarrollo permitía descargar archivos privados antes de esta corrección (reproducida con un archivo sintético, no con tus secretos). Las rutas están bloqueadas y cubiertas por pruebas. Si hubo usuarios o secretos reales en una vista Vite pública, deben revisarse accesos y rotarse antes de producción; esta tarea no ha modificado tus credenciales.
+- Las mutaciones `/api` requieren `Content-Type: application/json`, incluso comandos sin cuerpo. No se permite CORS abierto; el frontend utiliza `/api` de mismo origen. Las llamadas de otro origen se rechazan.
+- Configura proxies por IP/CIDR con `V2_TRUSTED_PROXIES`, solo tras asegurar que sustituyen los encabezados reenviados. Sin ello, los límites por IP se agregan en la IP del gateway. `APP_BASE_URL` es obligatorio en producción; `V2_ALLOWED_WEB_ORIGINS` autoriza orígenes web adicionales exactos, no habilita CORS.
+- `GET /api/health/live` indica proceso vivo; `/api/health/ready` comprueba acceso básico a SQLite, no disponibilidad de IA/OAuth/SMTP ni integridad completa.
+- `npm run backup -- /ruta/privada/nueva.sqlite` crea una copia online consistente de SQLite, comprueba integridad y **no sobrescribe** destinos existentes. Incluye las claves maestras por separado en tu plan de recuperación. La copia no está cifrada por la herramienta: usa almacenamiento cifrado y privado. Haz un simulacro aislado antes de depender de ella.
+- En producción, CSP limita scripts/conexiones al propio origen y bloquea iframes de otros sitios. La vista de desarrollo de Arena sigue siendo embebible. SIGTERM/SIGINT dan hasta 30 s de drenaje; una inferencia en curso puede interrumpirse sin garantizar que el proveedor no la cobre.

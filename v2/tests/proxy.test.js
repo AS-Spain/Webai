@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 test('el proxy real de Vite conserva el dominio público de ambos modos', async () => {
   const proxy = config.server.proxy['/api']
+  assert.deepEqual(config.preview.proxy['/api'], proxy, 'vite preview también debe enviar /api al backend')
   assert.equal(typeof proxy, 'object', 'El formato string activa changeOrigin y pierde el dominio de la vista previa')
   const backend = http.createServer((req, res) => res.end(JSON.stringify({ host: req.headers.host }))).listen(0, '127.0.0.1')
   await new Promise((resolve) => backend.once('listening', resolve))

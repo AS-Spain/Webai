@@ -17,3 +17,6 @@ ai-master.key
 
 # OAuth application credentials and external-account tokens.
 integrations-*.key
+
+# Template only: all real .env files remain ignored.
+!.env.example

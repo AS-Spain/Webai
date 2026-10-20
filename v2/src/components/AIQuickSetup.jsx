@@ -63,7 +63,7 @@ export default function AIQuickSetup({ user }) {
       const result = await api('/ai/config', { method: 'PUT', body: JSON.stringify({ provider, model, apiKey, baseUrl, allowContext }) })
       setStatus(result)
       setApiKey('')
-      setNotice('Conexión verificada y activada. Ya puedes elegir IA real en el asistente.')
+      setNotice('Inferencia de prueba recibida y configuración guardada. Ya puedes elegir IA real en el asistente; la disponibilidad puede cambiar.')
     } catch (requestError) { setError(requestError.message) }
     finally { setBusy('') }
   }
@@ -92,15 +92,16 @@ export default function AIQuickSetup({ user }) {
           <i />{status.configured ? 'Configurada' : 'Sin conectar'}
         </span>}
       </div>
-      {status?.demoMode && <p className="ai-privacy-note">Demo pública: solo modelos locales sin claves. Configura las conexiones privadas en la aplicación normal, nunca aquí.</p>}
+      {status?.demoMode && <p className="ai-privacy-note">Demo pública: {status.networkEnabled === false ? 'el acceso a servidores de modelos no está autorizado por el operador; las reglas locales siguen disponibles.' : 'el operador ha autorizado modelos locales sin claves y con límites compartidos.'} Configura conexiones privadas solo en la aplicación normal.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       {notice && <p className="ai-setup-notice" role="status"><CheckCircle2 size={16} />{notice}</p>}
       {busy === 'loading' && <p role="status">Cargando configuración…</p>}
+      {status && admin && status.networkEnabled === false && status.configured && <button type="button" className="button button-outline" onClick={disconnect} disabled={Boolean(busy)}>Eliminar configuración de demo guardada</button>}
       {status && !admin && <div className="ai-viewer-note">
         <strong>{status.configured ? `${status.providers.find((item) => item.id === status.provider)?.name} · ${status.model}` : 'Todavía no hay un proveedor de IA conectado.'}</strong>
         <p>Solo un administrador puede configurar o desconectar la IA. El asistente de reglas permanece disponible.</p>
       </div>}
-      {status && admin && <form onSubmit={activate} className="ai-setup-form">
+      {status && admin && status.networkEnabled !== false && <form onSubmit={activate} className="ai-setup-form">
         <div className="ai-setup-steps" aria-label="Pasos de configuración">
           <span><b>1</b> Proveedor</span><span><b>2</b> Conexión y modelo</span><span><b>3</b> Probar y activar</span>
         </div>
@@ -154,7 +155,7 @@ export default function AIQuickSetup({ user }) {
             {busy === 'save' ? 'Verificando conexión…' : 'Probar y activar'}
           </button>
         </div>
-        {status.verifiedAt && status.configured && <p className="ai-verification-date">Última verificación: {new Date(status.verifiedAt).toLocaleString('es-ES')} · {status.model}</p>}
+        {status.verifiedAt && status.configured && <p className="ai-verification-date">Última inferencia de prueba: {new Date(status.verifiedAt).toLocaleString('es-ES')} · {status.model} · Comprobación histórica, no estado en tiempo real.</p>}
       </form>}
     </section>
   )

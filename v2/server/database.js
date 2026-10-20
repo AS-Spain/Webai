@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { randomBytes, randomUUID, scryptSync } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { chmodSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { guardDatabaseMode } from './database-mode.js'
@@ -13,8 +13,12 @@ process.env.TZ = process.env.V2_TIME_ZONE || process.env.TZ || 'Europe/Madrid'
 const runtime = runtimeConfig()
 const root = path.dirname(fileURLToPath(import.meta.url))
 const dataDir = path.resolve(root, '../data')
-mkdirSync(dataDir, { recursive: true })
+mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+// Limit newly created database, WAL and SHM files on this process.
+process.umask(process.umask() | 0o077)
+mkdirSync(path.dirname(runtime.dbPath), { recursive: true, mode: 0o700 })
 export const db = new Database(runtime.dbPath)
+chmodSync(runtime.dbPath, 0o600)
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 guardDatabaseMode(db, runtime.demo)

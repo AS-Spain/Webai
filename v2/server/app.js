@@ -1,5 +1,8 @@
 import express from 'express'
 import nodemailer from 'nodemailer'
+import { privateFilePolicy } from './private-files.js'
+import { validateResource, validateReferences } from './validation.js'
+import { installSecurity, apiErrors, HttpError } from './security.js'
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,23 +20,25 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 
 const app = express()
 app.disable('x-powered-by')
-app.use(express.json({ limit: '1mb' }))
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff')
-  res.setHeader('Referrer-Policy', 'same-origin')
-  next()
+const consumeRequestLimit = installSecurity(app, { db, runtime })
+app.use(express.json({ limit: '128kb', strict: true }))
+app.get('/api/health/live', (req, res) => res.json({ status: 'ok' }))
+app.get('/api/health/ready', (req, res) => {
+  if (app.locals.shuttingDown) return res.status(503).json({ status: 'unavailable' })
+  try { db.prepare('SELECT 1').get(); res.json({ status: 'ready' }) }
+  catch { res.status(503).json({ status: 'unavailable' }) }
 })
 
 const invitationDuration = 48 * 60 * 60 * 1000
 const smtpTransport = !demoMode && process.env.SMTP_HOST ? nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
+  host: process.env.SMTP_HOST, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000,
   port: Number(process.env.SMTP_PORT || 587),
   secure: process.env.SMTP_SECURE === 'true',
   auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD || '' } : undefined,
 }) : null
 
 const bootstrap = prepareBootstrap({ db, demo: demoMode, dbPath: runtime.dbPath })
-const { authenticate, sessions, userByEmail, validEmail, hashToken } = registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
+const { authenticate, sessions, userByEmail, validEmail, hashToken } = registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap, consumeRequestLimit)
 
 function authorizeResource(resource, action) {
   return (req, res, next) => {
@@ -44,9 +49,9 @@ function authorizeResource(resource, action) {
   }
 }
 
-function authorizeWrite(req, res, next) {
+function authorizeAdmin(req, res, next) {
   if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Solo admin puede administrar automatizaciones.' })
+    return res.status(403).json({ error: 'Solo un administrador puede realizar esta operación.' })
   }
   next()
 }
@@ -59,7 +64,11 @@ app.get('/api/auth/me', authenticate, (req, res) => {
 registerIntegrationRoutes(app, { db, authenticate, demoMode, keyPath: path.join(path.dirname(runtime.keyPath), demoMode ? 'integrations-demo-master.key' : 'integrations-master.key'), recordActivity })
 
 app.use('/api', authenticate)
-registerAiRoutes(app, { db, day, recordActivity, demoMode, masterKeyPath: runtime.keyPath })
+registerAiRoutes(app, { db, day, recordActivity, demoMode, allowedOrigins: runtime.aiAllowedOrigins, demoAiEnabled: runtime.demoAiEnabled, canConfigure: (req) => {
+  if (demoMode) return true // Network access still requires the operator's explicit demo opt-in.
+  const user = db.prepare("SELECT id FROM users WHERE id = ? AND tenant_id = ? AND role = 'admin' AND status = 'active'").get(req.user.id, req.tenantId)
+  return Boolean(user && req.authenticatedSessionId && sessions.get(req.authenticatedSessionId))
+}, masterKeyPath: runtime.keyPath })
 
 app.get('/api/search', (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 100)
@@ -114,42 +123,35 @@ app.get('/api/team', (req, res) => {
 })
 
 function changeUserStatus(req, res, status) {
-  const current = db.prepare(`SELECT id, tenant_id, name, email, role, status, deactivated_at
-    FROM users WHERE id = ? AND tenant_id = ?`).get(req.params.id, req.tenantId)
-  if (!current) return res.status(404).json({ error: 'Persona no encontrada en este espacio.' })
-  if (current.status === status) return res.status(409).json({ error: `La cuenta ya está ${status === 'active' ? 'activa' : 'desactivada'}.` })
-  if (status === 'inactive' && current.id === req.user.id) return res.status(409).json({ error: 'No puedes desactivar tu propia cuenta.' })
-  if (status === 'inactive' && current.role === 'admin') {
-    const activeAdmins = db.prepare(`SELECT COUNT(*) AS count FROM users
-      WHERE tenant_id = ? AND role = 'admin' AND status = 'active'`).get(req.tenantId).count
-    if (activeAdmins <= 1) return res.status(409).json({ error: 'No se puede desactivar al último administrador activo.' })
-  }
-
+  if (demoMode) return res.status(403).json({ error: 'Los perfiles públicos de ejemplo no pueden desactivarse ni reactivarse.' })
   const changedAt = status === 'inactive' ? new Date().toISOString() : null
   const update = db.transaction(() => {
-    db.prepare('UPDATE users SET status = ?, deactivated_at = ? WHERE id = ? AND tenant_id = ?')
-      .run(status, changedAt, current.id, req.tenantId)
+    if (!db.prepare("SELECT id FROM users WHERE id = ? AND tenant_id = ? AND status = 'active' AND role = 'admin'").get(req.user.id, req.tenantId)) throw new HttpError(403, 'Tu autorización ya no está activa.')
+    const current = db.prepare('SELECT id, tenant_id, name, email, role, status, deactivated_at FROM users WHERE id = ? AND tenant_id = ?').get(req.params.id, req.tenantId)
+    if (!current) throw new HttpError(404, 'Persona no encontrada en este espacio.')
+    if (current.status === status) throw new HttpError(409, 'La cuenta ya tiene ese estado.')
+    if (status === 'inactive' && current.id === req.user.id) throw new HttpError(409, 'No puedes desactivar tu propia cuenta.')
+    if (status === 'inactive' && current.role === 'admin' && db.prepare("SELECT COUNT(*) AS count FROM users WHERE tenant_id = ? AND role = 'admin' AND status = 'active'").get(req.tenantId).count <= 1) throw new HttpError(409, 'No se puede desactivar al último administrador activo.')
+    db.prepare('UPDATE users SET status = ?, deactivated_at = ? WHERE id = ? AND tenant_id = ?').run(status, changedAt, current.id, req.tenantId)
+    const result = { ...current, status, deactivated_at: changedAt }
     recordActivity(req.user, status === 'inactive' ? 'deactivated' : 'reactivated', 'user', current.id,
       `${status === 'inactive' ? 'Desactivó' : 'Reactivó'} la cuenta de ${current.name} (${current.email}).`,
       status === 'inactive' ? 'Acceso revocado; se conservaron los registros históricos.' : 'Acceso restaurado por un administrador.',
-      { before: current, after: { ...current, status, deactivated_at: changedAt } })
+      { before: current, after: result })
+    if (status === 'inactive') sessions.deleteForUser(current.id)
+    return result
   })
-  update()
-
-  if (status === 'inactive') {
-    sessions.deleteForUser(current.id)
-  }
-  res.json({ ...current, status, deactivated_at: changedAt })
+  res.json(update.immediate())
 }
 
-app.post('/api/users/:id/deactivate', authorizeWrite, (req, res) => changeUserStatus(req, res, 'inactive'))
-app.post('/api/users/:id/reactivate', authorizeWrite, (req, res) => changeUserStatus(req, res, 'active'))
+app.post('/api/users/:id/deactivate', authorizeAdmin, (req, res) => changeUserStatus(req, res, 'inactive'))
+app.post('/api/users/:id/reactivate', authorizeAdmin, (req, res) => changeUserStatus(req, res, 'active'))
 
 app.get('/api/automations', (req, res) => {
   res.json(db.prepare('SELECT * FROM automations WHERE tenant_id = ? ORDER BY created_at').all(req.tenantId))
 })
 
-app.get('/api/invitations', authorizeWrite, (req, res) => {
+app.get('/api/invitations', authorizeAdmin, (req, res) => {
   const invitations = db.prepare(`SELECT i.id, i.email, i.role, i.created_at, i.expires_at, i.accepted_at, i.revoked_at,
       u.name AS created_by_name
     FROM invitations i JOIN users u ON u.id = i.created_by
@@ -158,7 +160,9 @@ app.get('/api/invitations', authorizeWrite, (req, res) => {
   res.json(invitations)
 })
 
-app.post('/api/invitations', authorizeWrite, async (req, res) => {
+app.post('/api/invitations', authorizeAdmin, async (req, res) => {
+  if (demoMode) return res.status(403).json({ error: 'La demo pública no crea cuentas ni invitaciones reales.' })
+  consumeRequestLimit('invitation-admin', req.user.id, 20, 60_000)
   const email = String(req.body?.email || '').trim().toLowerCase()
   const role = String(req.body?.role || '').trim()
   if (!validEmail(email)) return res.status(400).json({ error: 'Introduce un correo válido.' })
@@ -208,14 +212,14 @@ app.post('/api/invitations', authorizeWrite, async (req, res) => {
         text: `Has sido invitado a ${company} como ${role}. Activa tu cuenta dentro de 48 horas: ${activationUrl}`,
       })
       emailSent = true
-    } catch (error) {
-      console.error('Invitation email delivery failed:', error.message)
+    } catch {
+      console.error(JSON.stringify({ event: 'invitation_delivery_failed', requestId: req.requestId }))
     }
   }
   res.status(201).json({ id, email, role, expiresAt, activationUrl: activationUrl.toString(), emailSent })
 })
 
-app.delete('/api/invitations/:id', authorizeWrite, (req, res) => {
+app.delete('/api/invitations/:id', authorizeAdmin, (req, res) => {
   const invitation = db.prepare(`SELECT * FROM invitations
     WHERE id = ? AND tenant_id = ? AND accepted_at IS NULL AND revoked_at IS NULL`)
     .get(req.params.id, req.tenantId)
@@ -249,64 +253,31 @@ for (const [resource, config] of Object.entries(resourceConfig)) {
   })
 
   app.post(`/api/${resource}`, authorizeResource(resource, 'create'), (req, res) => {
-    const body = req.body && typeof req.body === 'object' ? req.body : {}
-    for (const field of config.required) {
-      if (!String(body[field] ?? '').trim()) return res.status(400).json({ error: `${field} es obligatorio.` })
-    }
-    const values = {}
-    for (const field of config.columns) {
-      if (body[field] === undefined) continue
-      if (config.enums?.[field] && !config.enums[field].includes(body[field])) return res.status(400).json({ error: `Valor no válido para ${field}.` })
-      if (config.numberFields?.includes(field)) {
-        const number = Number(body[field])
-        if (!Number.isFinite(number) || number < 0) return res.status(400).json({ error: `Valor numérico no válido para ${field}.` })
-        values[field] = number
-      } else if (config.jsonFields?.includes(field)) {
-        values[field] = JSON.stringify(Array.isArray(body[field]) ? body[field].map(String) : [])
-      } else {
-        const value = String(body[field]).trim()
-        values[field] = resource === 'tasks' && field === 'project_id' && !value ? null : value
-      }
-    }
-    for (const field of config.required) if (!values[field]) return res.status(400).json({ error: `${field} es obligatorio.` })
-    if (resource === 'tasks' && values.project_id && !db.prepare('SELECT id FROM projects WHERE id = ? AND tenant_id = ?').get(values.project_id, req.tenantId)) return res.status(400).json({ error: 'El proyecto seleccionado no existe en esta empresa.' })
+    const values = validateResource(resource, req.body)
+    validateReferences(db, req.tenantId, resource, values)
 
     const id = randomUUID()
     const fields = ['id', 'tenant_id', ...Object.keys(values), 'created_at']
     const insertValues = [id, req.tenantId, ...Object.values(values), new Date().toISOString()]
-    db.prepare(`INSERT INTO ${resource} (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`).run(...insertValues)
-    recordActivity(req.user, 'created', resource, id, `Creó ${resource === 'issues' ? 'una incidencia' : resource === 'tasks' ? 'una tarea' : resource === 'meetings' ? 'una reunión' : resource === 'events' ? 'un evento' : 'un proyecto'}: ${values.title || values.name}`, '', { after: values })
+    db.transaction(() => {
+      db.prepare(`INSERT INTO ${resource} (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`).run(...insertValues)
+      recordActivity(req.user, 'created', resource, id, `Creó ${resource === 'issues' ? 'una incidencia' : resource === 'tasks' ? 'una tarea' : resource === 'meetings' ? 'una reunión' : resource === 'events' ? 'un evento' : 'un proyecto'}: ${values.title || values.name}`, '', { after: values })
+    })()
     res.status(201).json(parseRow(resource, db.prepare(`SELECT * FROM ${resource} WHERE id = ? AND tenant_id = ?`).get(id, req.tenantId)))
   })
 
   app.patch(`/api/${resource}/:id`, authorizeResource(resource, 'update'), (req, res) => {
     const current = db.prepare(`SELECT * FROM ${resource} WHERE id = ? AND tenant_id = ?`).get(req.params.id, req.tenantId)
     if (!current) return res.status(404).json({ error: 'Registro no encontrado.' })
-    const values = {}
-    for (const field of config.columns) {
-      if (req.body?.[field] === undefined) continue
-      const value = req.body[field]
-      if (config.enums?.[field] && !config.enums[field].includes(value)) return res.status(400).json({ error: `Valor no válido para ${field}.` })
-      if (config.numberFields?.includes(field)) {
-        const number = Number(value)
-        if (!Number.isFinite(number) || number < 0) return res.status(400).json({ error: `Valor numérico no válido para ${field}.` })
-        values[field] = number
-      } else if (config.jsonFields?.includes(field)) {
-        values[field] = JSON.stringify(Array.isArray(value) ? value.map(String) : [])
-      } else {
-        values[field] = String(value).trim()
-      }
-    }
-    if (resource === 'tasks' && 'project_id' in values) {
-      values.project_id ||= null
-      if (values.project_id && !db.prepare('SELECT id FROM projects WHERE id = ? AND tenant_id = ?').get(values.project_id, req.tenantId)) return res.status(400).json({ error: 'El proyecto seleccionado no existe en esta empresa.' })
-    }
-    if (!Object.keys(values).length) return res.status(400).json({ error: 'No hay cambios válidos.' })
+    const values = validateResource(resource, req.body, { partial: true })
+    validateReferences(db, req.tenantId, resource, values)
     const changes = Object.entries(values)
-    db.prepare(`UPDATE ${resource} SET ${changes.map(([field]) => `${field} = ?`).join(', ')} WHERE id = ? AND tenant_id = ?`).run(...changes.map(([, value]) => value), req.params.id, req.tenantId)
-    const label = values.title || values.name || current.title || current.name
-    const changedStatus = values.status && values.status !== current.status ? ` (estado: ${current.status} → ${values.status})` : ''
-    recordActivity(req.user, 'updated', resource, req.params.id, `Actualizó ${label}${changedStatus}`, String(req.body?.reason || ''), { before: current, after: { ...current, ...values } })
+    db.transaction(() => {
+      db.prepare(`UPDATE ${resource} SET ${changes.map(([field]) => `${field} = ?`).join(', ')} WHERE id = ? AND tenant_id = ?`).run(...changes.map(([, value]) => value), req.params.id, req.tenantId)
+      const label = values.title || values.name || current.title || current.name
+      const changedStatus = values.status && values.status !== current.status ? ` (estado: ${current.status} → ${values.status})` : ''
+      recordActivity(req.user, 'updated', resource, req.params.id, `Actualizó ${label}${changedStatus}`, String(req.body?.reason || ''), { before: current, after: { ...current, ...values } })
+    })()
     res.json(parseRow(resource, db.prepare(`SELECT * FROM ${resource} WHERE id = ? AND tenant_id = ?`).get(req.params.id, req.tenantId)))
   })
 
@@ -331,7 +302,7 @@ for (const [resource, config] of Object.entries(resourceConfig)) {
   })
 }
 
-app.patch('/api/automations/:id', authorizeWrite, (req, res) => {
+app.patch('/api/automations/:id', authorizeAdmin, (req, res) => {
   if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'El estado enabled debe ser booleano.' })
   const result = db.prepare('UPDATE automations SET enabled = ? WHERE id = ? AND tenant_id = ?').run(Number(req.body.enabled), req.params.id, req.tenantId)
   if (!result.changes) return res.status(404).json({ error: 'Automatización no encontrada.' })
@@ -339,7 +310,7 @@ app.patch('/api/automations/:id', authorizeWrite, (req, res) => {
   res.json(db.prepare('SELECT * FROM automations WHERE id = ? AND tenant_id = ?').get(req.params.id, req.tenantId))
 })
 
-app.post('/api/automations/:id/run', authorizeWrite, (req, res) => {
+app.post('/api/automations/:id/run', authorizeAdmin, (req, res) => {
   const automation = db.prepare('SELECT * FROM automations WHERE id = ? AND tenant_id = ?').get(req.params.id, req.tenantId)
   if (!automation) return res.status(404).json({ error: 'Automatización no encontrada.' })
   if (!automation.enabled) return res.status(409).json({ error: 'Activa la automatización antes de probarla.' })
@@ -353,7 +324,7 @@ app.post('/api/automations/:id/run', authorizeWrite, (req, res) => {
     affected = db.prepare("SELECT COUNT(*) AS value FROM issues WHERE tenant_id = ? AND severity = 'Critical' AND status != 'Resolved'").get(req.tenantId).value
     summary = `${affected} incidencia${affected === 1 ? '' : 's'} crítica${affected === 1 ? '' : 's'} abierta${affected === 1 ? '' : 's'} encontrada${affected === 1 ? '' : 's'}. No se enviaron notificaciones externas.`
   } else {
-    summary = 'La automatización está registrada; conecte un proveedor de notas para habilitar el disparador.'
+    return res.status(409).json({ error: 'Este disparador todavía no está implementado. No se ha ejecutado ninguna automatización.' })
   }
   db.prepare('UPDATE automations SET runs = runs + 1 WHERE id = ? AND tenant_id = ?').run(req.params.id, req.tenantId)
   recordActivity(req.user, 'tested', 'automation', req.params.id, `Probó ${automation.name}: ${summary}`)
@@ -362,7 +333,10 @@ app.post('/api/automations/:id/run', authorizeWrite, (req, res) => {
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta de API no encontrada.' }))
 
+app.use(apiErrors)
+
 const distDir = path.resolve(root, '../dist')
+app.use(privateFilePolicy().middleware({ root: distDir }))
 app.use(express.static(distDir))
 app.get('*path', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next()

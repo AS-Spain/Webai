@@ -1,10 +1,11 @@
-import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { passwordHash as derivePassword, validPassword } from './passwords.js'
+import { rateLimiter, HttpError } from './security.js'
 import { SessionStore } from './sessions.js'
 import { cookiePolicy } from './cookies.js'
 
-export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap) {
+export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap, consume = rateLimiter(db)) {
   const sessions = new SessionStore(db)
-  const loginAttempts = new Map()
   const sessionCookie = demoMode ? 'webai_v2_demo_session' : 'webai_v2_private_session'
   const readSession = (req) => {
     // Legacy Authorization bearer is demo-only. Explicit temporary private
@@ -31,6 +32,11 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
   }
 
   function establishSession(req, res, user, transport = 'cookie') {
+    if (!demoMode) {
+      const previous = readSession(req), memory = req.get('x-webai-session')
+      if (previous && sessions.get(previous)?.transport === 'cookie') sessions.delete(previous)
+      if (memory && sessions.get(memory)?.transport === 'memory') sessions.delete(memory)
+    }
     const sessionId = randomBytes(32).toString('hex')
     sessions.set(sessionId, { userId: user.id, tenantId: user.tenant_id, expiresAt: Date.now() + sessionDuration, transport })
     if (transport === 'memory') {
@@ -55,7 +61,7 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
   }
 
   function validEmail(value) {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
+    return typeof value === 'string' && value.length <= 254 && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value.trim())
   }
 
   app.use(['/api/setup', '/api/auth'], (req, res, next) => {
@@ -73,26 +79,27 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
   // Retired: bootstrap secrets are available only on the operator's console.
   app.post('/api/setup/claim', (req, res) => res.status(404).json({ error: 'El token inicial solo está disponible en la consola del servidor.' }))
 
-  app.post('/api/setup/bootstrap', (req, res) => {
+  app.post('/api/setup/bootstrap', async (req, res) => {
+    consume('bootstrap-ip', req.ip, 10, 60_000)
     if (demoMode) return res.status(403).json({ error: 'La demo no admite el alta de espacios privados.' })
     if (!validBootstrapToken(req.body?.bootstrapToken)) return res.status(403).json({ error: 'Token de configuración no válido. Contacta con quien administra el despliegue.' })
     if (db.prepare('SELECT COUNT(*) AS count FROM users').get().count) return res.status(409).json({ error: 'El administrador inicial ya fue creado.' })
 
-    const company = String(req.body?.company || '').trim()
-    const name = String(req.body?.name || '').trim()
-    const email = String(req.body?.email || '').trim().toLowerCase()
-    const password = String(req.body?.password || '')
+    const company = (typeof req.body?.company === 'string' ? req.body.company : '').trim()
+    const name = (typeof req.body?.name === 'string' ? req.body.name : '').trim()
+    const email = (typeof req.body?.email === 'string' ? req.body.email : '').trim().toLowerCase()
+    const password = req.body?.password
     if (company.length < 2 || company.length > 100) return res.status(400).json({ error: 'El nombre de la empresa debe tener entre 2 y 100 caracteres.' })
     if (name.length < 2 || name.length > 100) return res.status(400).json({ error: 'El nombre debe tener entre 2 y 100 caracteres.' })
     if (!validEmail(email)) return res.status(400).json({ error: 'Introduce un correo válido.' })
-    if (password.length < 12) return res.status(400).json({ error: 'La contraseña debe tener al menos 12 caracteres.' })
+    if (!validPassword(password)) return res.status(400).json({ error: 'La contraseña debe tener al menos 12 caracteres y como máximo 1.024 bytes.' })
 
+    const salt = randomBytes(16).toString('hex')
+    const passwordHash = await derivePassword(password, salt)
     const createWorkspace = db.transaction(() => {
       if (db.prepare('SELECT COUNT(*) AS count FROM users').get().count) throw new Error('BOOTSTRAP_ALREADY_USED')
       const tenantId = randomUUID()
       const userId = randomUUID()
-      const salt = randomBytes(16).toString('hex')
-      const passwordHash = scryptSync(password, salt, 64).toString('hex')
       db.prepare('INSERT INTO tenants (id, name) VALUES (?, ?)').run(tenantId, company)
       db.prepare(`INSERT INTO users (id, tenant_id, name, email, role, salt, password_hash)
         VALUES (?, ?, ?, ?, 'admin', ?, ?)`)
@@ -127,16 +134,22 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
     res.json({ email: invitation.email, role: invitation.role, company: invitation.company, expiresAt: invitation.expires_at })
   })
 
-  app.post('/api/invitations/accept', (req, res) => {
+  app.post('/api/invitations/accept', async (req, res) => {
+    if (demoMode) return res.status(403).json({ error: 'La demo pública no admite cuentas reales.' })
+    consume('activation-ip', req.ip, 10, 60_000)
     const token = String(req.body?.token || '')
-    const name = String(req.body?.name || '').trim()
-    const password = String(req.body?.password || '')
+    const name = (typeof req.body?.name === 'string' ? req.body.name : '').trim()
+    const password = req.body?.password
     if (token.length < 32 || token.length > 256) return res.status(400).json({ error: 'El enlace de invitación no es válido.' })
     if (name.length < 2 || name.length > 100) return res.status(400).json({ error: 'El nombre debe tener entre 2 y 100 caracteres.' })
-    if (password.length < 12) return res.status(400).json({ error: 'La contraseña debe tener al menos 12 caracteres.' })
+    if (!validPassword(password)) return res.status(400).json({ error: 'La contraseña debe tener al menos 12 caracteres y como máximo 1.024 bytes.' })
     const tokenHash = hashToken(token)
 
     try {
+      const active = db.prepare('SELECT id FROM invitations WHERE token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?').get(tokenHash, new Date().toISOString())
+      if (!active) throw new Error('INVITATION_NOT_ACTIVE')
+      const salt = randomBytes(16).toString('hex')
+      const passwordHash = await derivePassword(password, salt)
       const accept = db.transaction(() => {
         const invitation = db.prepare(`SELECT * FROM invitations
           WHERE token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?`)
@@ -144,8 +157,6 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
         if (!invitation) throw new Error('INVITATION_NOT_ACTIVE')
         if (userByEmail.get(invitation.email)) throw new Error('INVITATION_EMAIL_EXISTS')
         const id = randomUUID()
-        const salt = randomBytes(16).toString('hex')
-        const passwordHash = scryptSync(password, salt, 64).toString('hex')
         db.prepare(`INSERT INTO users (id, tenant_id, name, email, role, salt, password_hash)
           VALUES (?, ?, ?, ?, ?, ?, ?)`)
           .run(id, invitation.tenant_id, name, invitation.email, invitation.role, salt, passwordHash)
@@ -178,29 +189,22 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
     res.json({ user: publicUser, company: 'Northstar · DEMO', sessionToken: res.locals.demoSessionToken, demoMode: true })
   })
 
-  app.post('/api/auth/login', (req, res) => {
-    const address = req.ip || 'unknown'
-    const attempts = loginAttempts.get(address) || { count: 0, resetAt: Date.now() + 15 * 60 * 1000 }
-    if (attempts.resetAt < Date.now()) {
-      attempts.count = 0
-      attempts.resetAt = Date.now() + 15 * 60 * 1000
-    }
-    if (attempts.count >= 10) return res.status(429).json({ error: 'Demasiados intentos. Espera unos minutos.' })
-
-    const email = String(req.body?.email || '').trim().toLowerCase()
-    const password = String(req.body?.password || '')
+  app.post('/api/auth/login', async (req, res) => {
+    if (demoMode) return res.status(403).json({ error: 'La demo pública se abre sin contraseña; no introduzcas credenciales reales.' })
+    consume('login-ip', req.ip, 50, 15 * 60_000)
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
+    const password = req.body?.password
+    if (!validEmail(email) || typeof password !== 'string' || !password || Buffer.byteLength(password) > 1024) return res.status(401).json({ error: 'Correo o contraseña incorrectos.' })
+    consume('login-account', email, 20, 15 * 60_000)
     const user = userByEmail.get(email)
-    const candidate = scryptSync(password, user?.salt || 'invalid-user-salt', 64)
-    const valid = user && user.status === 'active' && timingSafeEqual(candidate, Buffer.from(user.password_hash, 'hex'))
-    if (!valid) {
-      attempts.count += 1
-      loginAttempts.set(address, attempts)
-      return res.status(401).json({ error: 'Correo o contraseña incorrectos.' })
-    }
+    const candidate = Buffer.from(await derivePassword(password, user?.salt || 'invalid-user-salt'), 'hex')
+    const expected = Buffer.from(user?.password_hash || '', 'hex')
+    if (!user || user.status !== 'active' || candidate.length !== expected.length || !timingSafeEqual(candidate, expected)) return res.status(401).json({ error: 'Correo o contraseña incorrectos.' })
+    // A deactivation can happen while the asynchronous hash is being calculated.
+    if (!db.prepare("SELECT id FROM users WHERE id = ? AND status = 'active'").get(user.id)) throw new HttpError(401, 'Correo o contraseña incorrectos.')
 
     const transport = req.body?.sessionTransport || 'cookie'
     if (!['cookie', 'memory'].includes(transport)) return res.status(400).json({ error: 'Tipo de sesión no válido.' })
-    loginAttempts.delete(address)
     const publicUser = establishSession(req, res, user, transport)
     return res.json({ user: publicUser, company: db.prepare('SELECT name FROM tenants WHERE id = ?').get(user.tenant_id).name,
       ...(transport === 'memory' ? { sessionTransport: 'memory', sessionToken: res.locals.privateSessionToken } : {}) })
@@ -214,6 +218,10 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
     clearCookie(req, res)
     res.status(204).end()
   })
+
+  function countWrite(req) {
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) consume('workspace-writes', req.tenantId, 120, 60_000)
+  }
 
   function authenticate(req, res, next) {
     if (demoMode) {
@@ -231,6 +239,7 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
       if (!user) return res.status(409).json({ error: 'Ese perfil de ejemplo no está disponible.' })
       req.user = user
       req.tenantId = user.tenant_id
+      countWrite(req)
       return next()
     }
     const memory = req.get('x-webai-session')
@@ -248,7 +257,9 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
       return res.status(401).json({ error: 'Tu cuenta está desactivada. Contacta con un administrador.' })
     }
     req.user = user
+    req.authenticatedSessionId = sessionId
     req.tenantId = session.tenantId
+    countWrite(req)
     next()
   }
 

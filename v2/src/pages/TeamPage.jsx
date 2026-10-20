@@ -13,7 +13,7 @@ function TeamPage({
   inviteEmailSent,
   onCopyInvite,
   onRevoke,
-  onStatus,
+  onStatus, demoMode = false,
 }) {
   return (
     <div className="team-page">
@@ -21,7 +21,7 @@ function TeamPage({
         <div>
           <span className="panel-kicker"> {t("PEOPLE & CAPACITY")} </span>
           <h2> {t("Manage your people and their access.")} </h2>
-          <p> {t("Invitations expire after 48 hours and can only be accepted once.")} </p>
+          <p> {demoMode ? 'Perfiles sintéticos compartidos. La demo no crea invitaciones ni cuentas reales y no permite desactivar estos perfiles.' : t("Invitations expire after 48 hours and can only be accepted once.")} </p>
         </div>
         <span className="team-count"><Users size={16} />{team.length} {t("member")} {team.length === 1 ? '' : 's'}</span>
       </div>

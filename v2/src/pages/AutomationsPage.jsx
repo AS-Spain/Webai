@@ -11,9 +11,9 @@ function AutomationsPage({ automations, canManage, onToggle, onRun }) {
         <div>
           <span className="panel-kicker"> {t("RULES, NOT MAGIC")} </span>
           <h2> {t("Helpful workflows, with a human in control.")} </h2>
-          <p> {'Las pruebas consultan datos y registran actividad. No envían notificaciones externas ni utilizan IA generativa.'} </p>
+          <p> {'Las pruebas consultan datos y registran actividad. No se ejecutan en segundo plano, no envían notificaciones externas ni utilizan IA generativa. Los disparadores pendientes devuelven un error, no una ejecución correcta.'} </p>
         </div>
-        <span className="automation-status"><i /> {automations.filter((item) => item.enabled).length} ACTIVAS</span>
+        <span className="automation-status"><i /> {automations.filter((item) => item.enabled).length} HABILITADAS PARA PRUEBA</span>
       </div>
 
       <div className="automation-list">

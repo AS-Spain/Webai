@@ -118,6 +118,21 @@ test('demo separada: entrada sin contraseña, cookies bloqueadas y protección d
       }
       assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ai_settings').get().n, 0)
     })
+    await suite.test('los perfiles sintéticos no administran identidades reales ni servidores locales', async () => {
+      const team = (await request('/team')).body
+      for (const person of team) {
+        assert.equal((await request(`/users/${person.id}/deactivate`, { method: 'POST' })).status, 403)
+        assert.equal((await request(`/users/${person.id}/reactivate`, { method: 'POST' })).status, 403)
+      }
+      assert.equal((await request('/invitations', { method: 'POST', body: { email: 'never@example.com', role: 'admin' } })).status, 403)
+      assert.equal((await request('/invitations/accept', { method: 'POST', body: {} })).status, 403)
+      assert.equal((await request('/auth/login', { method: 'POST', body: { email: 'never@example.com', password: 'not-real' } })).status, 403)
+      assert.equal((await request('/ai/config')).body.networkEnabled, false)
+      assert.equal((await request('/ai/models', { method: 'POST', body: { provider: 'ollama' } })).status, 403)
+      assert.equal((await request('/ai/ask', { method: 'POST', body: { mode: 'rules', question: 'hoy' } })).status, 200)
+      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM invitations').get().n, 0)
+      assert.ok((await request('/team')).body.every((person) => person.status === 'active'))
+    })
     await suite.test('los clientes antiguos pueden salir pero la demo continúa siendo pública', async () => {
       assert.equal((await request('/setup/bootstrap', { method: 'POST', body: {} })).status, 403)
       assert.equal((await request('/auth/logout', { token, method: 'POST' })).status, 204)

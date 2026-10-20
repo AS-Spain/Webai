@@ -9,11 +9,13 @@ import { providers, resolveBase } from '../server/ai-providers.js'
 import { registerAiRoutes } from '../server/ai.js'
 
 // No paid requests and no real credentials: inspect the exact provider protocol.
-async function fixture({ allowedOrigins, legacy = false } = {}) {
+async function fixture({ allowedOrigins, legacy = false, demoMode = false, demoAiEnabled = false, upstreamTimeoutMs } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'northstar-ai-'))
   const db = new Database(':memory:')
   db.exec(`CREATE TABLE tenants (id TEXT PRIMARY KEY);
     INSERT INTO tenants VALUES ('a'), ('b');
+    CREATE TABLE users (id TEXT PRIMARY KEY, tenant_id TEXT, role TEXT, status TEXT);
+    INSERT INTO users VALUES ('a-user', 'a', 'admin', 'active'), ('b-user', 'b', 'admin', 'active');
     CREATE TABLE projects (id TEXT, tenant_id TEXT, name TEXT, status TEXT, progress INTEGER, due_date TEXT);
     CREATE TABLE tasks (id TEXT, tenant_id TEXT, title TEXT, status TEXT, priority TEXT, due_date TEXT);
     CREATE TABLE issues (id TEXT, tenant_id TEXT, title TEXT, status TEXT, severity TEXT, owner TEXT);
@@ -38,15 +40,15 @@ async function fixture({ allowedOrigins, legacy = false } = {}) {
     next()
   })
   registerAiRoutes(app, {
-    db, allowedOrigins, day: () => '2026-10-20', masterKeyPath: path.join(dir, 'master.key'),
+    db, allowedOrigins, demoMode, demoAiEnabled, upstreamTimeoutMs, day: () => '2026-10-20', masterKeyPath: path.join(dir, 'master.key'),
     recordActivity: (...args) => audit.push(args),
     fetchImpl: async (url, options) => { calls.push({ url, options }); return behavior(url, options) },
   })
   const server = app.listen(0, '127.0.0.1')
   await new Promise((resolve) => server.once('listening', resolve))
   const base = `http://127.0.0.1:${server.address().port}/api/ai`
-  async function request(route, { method = 'GET', body, tenant = 'a', role = 'admin' } = {}) {
-    const response = await fetch(`${base}${route}`, { method, headers: { 'Content-Type': 'application/json', 'test-tenant': tenant, 'test-role': role }, ...(body ? { body: JSON.stringify(body) } : {}) })
+  async function request(route, { method = 'GET', body, tenant = 'a', role = 'admin', signal } = {}) {
+    const response = await fetch(`${base}${route}`, { method, signal, headers: { 'Content-Type': 'application/json', 'test-tenant': tenant, 'test-role': role }, ...(body ? { body: JSON.stringify(body) } : {}) })
     return { status: response.status, headers: response.headers, body: await response.json().catch(() => null) }
   }
   const activate = (overrides = {}, tenant = 'a') => request('/config', { method: 'PUT', tenant, body: { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-unit-test-key', allowContext: false, ...overrides } })
@@ -323,4 +325,154 @@ test('si no se ha instalado el servidor local, el error no simula una conexión 
     assert.match(result.body.error, /Arranca Ollama o LM Studio/)
     assert.equal((await f.request('/config')).body.configured, false)
   } finally { await f.close() }
+})
+
+const chatResponse = (content = 'OK', finish = 'stop', extra = {}) => new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: finish }], ...extra }))
+const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r }); return { promise, resolve } }
+
+test('demo: ningún visitante accede a red/modelos sin autorización explícita del operador', async () => {
+  const f = await fixture({ demoMode: true })
+  try {
+    assert.equal((await f.request('/config')).body.networkEnabled, false)
+    assert.equal((await f.activate({ provider: 'ollama', apiKey: '', model: 'qwen2.5:3b' })).status, 403)
+    assert.equal((await f.request('/models', { method: 'POST', body: { provider: 'ollama' } })).status, 403)
+    assert.equal((await f.request('/ask', { method: 'POST', body: { mode: 'ai', question: 'hola', includeContext: false } })).status, 403)
+    assert.equal((await f.request('/ask', { method: 'POST', body: { mode: 'rules', question: 'tareas hoy' } })).status, 200)
+    assert.equal(f.calls.length, 0)
+  } finally { await f.close() }
+  const opted = await fixture({ demoMode: true, demoAiEnabled: true })
+  try {
+    assert.equal((await opted.activate({ provider: 'ollama', apiKey: '', model: 'qwen2.5:3b' })).status, 200)
+    assert.equal((await opted.activate()).status, 403, 'Opt-in no permite claves ni proveedores de pago')
+  } finally { await opted.close() }
+})
+
+test('IA: lectura acotada, JSON inválido y catálogo sin eco de la clave ni IDs falsos', async () => {
+  const f = await fixture()
+  try {
+    f.setBehavior(async () => new Response('x'.repeat(262145)))
+    assert.equal((await f.activate()).status, 502)
+    for (const body of ['null', '[]', 'not-json']) {
+      f.setBehavior(async () => new Response(body))
+      assert.equal((await f.activate()).status, 502)
+    }
+    f.setBehavior(async () => new Response(JSON.stringify({ data: [null, {}, { id: 'safe-model' }, { id: 'fake-unit-test-key' }, { id: 'a'.repeat(151) }] })))
+    const result = await f.request('/models', { method: 'POST', body: { provider: 'openai', apiKey: 'fake-unit-test-key' } })
+    assert.equal(result.status, 200)
+    assert.deepEqual(result.body.models, ['safe-model'])
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM ai_settings').get().n, 0)
+  } finally { await f.close() }
+})
+
+test('IA: respuestas parciales/filtradas, metadatos de uso y ocultación antes de recortar', async () => {
+  const f = await fixture()
+  try {
+    f.setBehavior(async () => chatResponse('partial', 'length'))
+    assert.equal((await f.activate()).status, 422, 'No activar una prueba incompleta')
+    f.setBehavior(async () => chatResponse())
+    await f.activate()
+    f.setBehavior(async () => chatResponse('Texto parcial', 'length', { usage: { prompt_tokens: 10, completion_tokens: 800, total_tokens: 810, secret: 'never-show' } }))
+    const partial = await f.request('/ask', { method: 'POST', body: { mode: 'ai', question: 'hola', includeContext: false } })
+    assert.equal(partial.status, 200)
+    assert.equal(partial.body.truncated, true)
+    assert.equal(partial.body.finishReason, 'length')
+    assert.deepEqual(partial.body.usage, { prompt_tokens: 10, completion_tokens: 800, total_tokens: 810 })
+    for (const reason of ['content_filter', 'tool_calls', 'function_call', 'unexpected-secret']) {
+      f.setBehavior(async () => chatResponse('Text', reason))
+      const result = await f.request('/ask', { method: 'POST', body: { mode: 'ai', question: 'hola', includeContext: false } })
+      assert.equal(result.status, reason === 'unexpected-secret' ? 502 : 422)
+      assert.equal(result.body.answer, undefined)
+      assert.doesNotMatch(JSON.stringify(result.body), /unexpected-secret/)
+    }
+    f.setBehavior(async () => chatResponse('x'.repeat(15992) + 'fake-unit-test-key' + ' after'))
+    const clipped = await f.request('/ask', { method: 'POST', body: { mode: 'ai', question: 'hola', includeContext: false } })
+    assert.equal(clipped.body.truncated, true)
+    assert.equal(clipped.body.answer.length, 16000)
+    assert.doesNotMatch(clipped.body.answer, /fake-uni/)
+  } finally { await f.close() }
+})
+
+test('IA: carrera de desconexión o cambio de admin no restaura una configuración obsoleta', async () => {
+  const f = await fixture()
+  try {
+    await f.activate()
+    for (const event of ['disconnect', 'deactivate', 'role']) {
+      const seen = deferred(), release = deferred()
+      f.setBehavior(async () => { seen.resolve(); await release.promise; return chatResponse() })
+      const pending = f.activate({ model: 'new-model' })
+      await seen.promise
+      if (event === 'disconnect') assert.equal((await f.request('/config', { method: 'DELETE' })).status, 204)
+      if (event === 'deactivate') f.db.prepare("UPDATE users SET status = 'inactive' WHERE id = 'a-user'").run()
+      if (event === 'role') f.db.prepare("UPDATE users SET role = 'member' WHERE id = 'a-user'").run()
+      release.resolve()
+      assert.equal((await pending).status, event === 'disconnect' ? 409 : 403)
+      assert.equal((await f.request('/config')).body.configured, false)
+      f.db.prepare("UPDATE users SET status = 'active', role = 'admin' WHERE id = 'a-user'").run()
+    }
+  } finally { await f.close() }
+})
+
+test('IA: concurrencia por empresa, liberación al cancelar y presupuesto compartido', async () => {
+  const f = await fixture()
+  try {
+    await f.activate()
+    let seen = 0
+    const bothStarted = deferred(), release = deferred()
+    f.setBehavior(async () => { if (++seen === 2) bothStarted.resolve(); await release.promise; return chatResponse() })
+    const ask = (extra = {}) => f.request('/ask', { method: 'POST', body: { mode: 'ai', question: 'hola', includeContext: false }, ...extra })
+    const pending = [ask(), ask()]
+    await bothStarted.promise
+    assert.equal((await ask()).status, 429)
+    release.resolve()
+    assert.ok((await Promise.all(pending)).every((result) => result.status === 200))
+    const started = deferred(), canceled = deferred(), controller = new AbortController()
+    f.setBehavior(async (url, options) => { started.resolve(); await new Promise((resolve, reject) => options.signal.addEventListener('abort', () => { canceled.resolve(); reject(new DOMException('Canceled', 'AbortError')) }, { once: true })) })
+    const cancelable = ask({ signal: controller.signal })
+    await started.promise
+    controller.abort()
+    await assert.rejects(cancelable, { name: 'AbortError' })
+    await canceled.promise
+    f.setBehavior(async () => chatResponse())
+    assert.equal((await ask()).status, 200)
+    f.db.prepare("UPDATE ai_rate_limits SET count = 60 WHERE user_id = '__workspace__'").run()
+    assert.equal((await ask()).status, 429)
+    assert.equal((await f.request('/ask', { method: 'POST', body: { mode: 'rules', question: 'hola' } })).status, 200)
+  } finally { await f.close() }
+})
+
+test('IA: contexto acotado en caracteres, sin otras empresas ni descripciones', async () => {
+  const f = await fixture()
+  try {
+    for (let i = 0; i < 30; i++) {
+      f.db.prepare('INSERT INTO projects VALUES (?, ?, ?, ?, ?, ?)').run(`p-${i}`, 'a', 'P'.repeat(1000), 'On track', 0, '2026-12-01')
+      f.db.prepare('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?)').run(`t-${i}`, 'a', 'T'.repeat(1000), 'To do', 'High', '2026-12-01')
+      f.db.prepare('INSERT INTO issues VALUES (?, ?, ?, ?, ?, ?)').run(`i-${i}`, 'a', 'I'.repeat(1000), 'Open', 'Critical', 'PRIVATE OWNER')
+    }
+    await f.activate({ allowContext: true })
+    const result = await f.request('/ask', { method: 'POST', body: { mode: 'ai', question: 'hola', includeContext: true } })
+    assert.equal(result.status, 200)
+    const messages = JSON.parse(f.calls.at(-1).options.body).messages
+    const context = messages.find((message) => message.content.startsWith('Contexto operativo'))
+    const payload = context.content.split('\n')[1]
+    assert.ok(payload.length <= 12000)
+    assert.doesNotMatch(payload, /SECRETO EMPRESA B|PRIVATE OWNER/)
+    assert.ok(Object.values(result.body.contextCounts).reduce((a, b) => a + b, 0) < 75)
+  } finally { await f.close() }
+})
+
+test('IA: timeout real durante lectura HTTP lenta, sin guardar configuración ni reintentar', async () => {
+  const mock = express()
+  let requests = 0
+  mock.post('/v1/chat/completions', (req, res) => { requests++; res.type('json').write('{') })
+  const upstream = mock.listen(0, '127.0.0.1')
+  await new Promise((resolve) => upstream.once('listening', resolve))
+  const origin = `http://127.0.0.1:${upstream.address().port}`
+  const f = await fixture({ allowedOrigins: origin, upstreamTimeoutMs: 80 })
+  try {
+    f.setBehavior((url, options) => fetch(url, options))
+    const result = await f.activate({ provider: 'compatible', apiKey: '', model: 'test-model', baseUrl: `${origin}/v1` })
+    assert.equal(result.status, 504)
+    assert.equal(requests, 1)
+    assert.equal((await f.request('/config')).body.configured, false)
+  } finally { upstream.closeAllConnections(); await new Promise((resolve) => upstream.close(resolve)); await f.close() }
 })

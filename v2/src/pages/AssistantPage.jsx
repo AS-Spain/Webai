@@ -58,11 +58,12 @@ function AssistantPage({ workspace, onCreate, onSetup }) {
           <p> {t("Explore the project, task, and issue data currently loaded in this workspace.")} </p>
         </div>
 
+        {config?.networkEnabled === false && <p className="ai-privacy-note" role="status">La demo pública utiliza reglas locales. El acceso a modelos requiere autorización del operador del servidor.</p>}
         <div className="assistant-mode-controls">
           <fieldset disabled={pending || !config}>
             <legend>Cómo quieres consultar</legend>
             <label><input type="radio" name="assistant-mode" value="rules" checked={mode === 'rules'} onChange={() => { setMode('rules'); setError('') }} /> Reglas locales</label>
-            <label><input type="radio" name="assistant-mode" value="ai" checked={mode === 'ai'} disabled={!config?.configured || pending} onChange={() => { setMode('ai'); setError('') }} /> {config?.local ? 'IA local' : 'IA real'} {config?.configured ? `· ${config.model}` : '· sin configurar'}</label>
+            <label><input type="radio" name="assistant-mode" value="ai" checked={mode === 'ai'} disabled={!config?.configured || config?.networkEnabled === false || pending} onChange={() => { setMode('ai'); setError('') }} /> {config?.local ? 'IA local' : 'IA real'} {config?.configured ? `· ${config.model}` : '· sin configurar'}</label>
           </fieldset>
           {mode === 'ai' && <div className="assistant-ai-consent">
             <p>Tu pregunta se enviará a {config?.providers.find((item) => item.id === config.provider)?.name}. {config?.local ? 'Se usa el servidor de modelos configurado por el administrador para todo el espacio.' : 'Puede generar costes de API.'} Revisa la respuesta; la IA puede equivocarse.</p>
@@ -90,7 +91,10 @@ function AssistantPage({ workspace, onCreate, onSetup }) {
                 <div>
                   <strong>{answerInfo?.mode === 'ai' ? `${answerInfo.provider} · ${answerInfo.model}` : 'Asistente · reglas locales'}</strong>
                   <p>{answer}</p>
-                  <small> {answerInfo?.mode === 'ai' ? answerInfo.sharedContext ? `${answerInfo.local ? 'IA local' : 'IA generativa'} · muestra operativa limitada. Requiere revisión humana.` : `${answerInfo.local ? 'IA local' : 'IA generativa'} · sin contexto del espacio.` : 'Reglas locales sobre los registros de tu empresa; sin proveedor externo.'} </small>
+                  {answerInfo?.truncated && <p className="ai-privacy-note" role="status">Respuesta parcial: el proveedor agotó el límite de salida o se recortó el texto. No la interpretes como una respuesta completa; acota la pregunta antes de repetirla.</p>}
+                  {answerInfo?.mode === 'ai' && answerInfo.finishReason === 'unknown' && <small>El proveedor no comunicó el motivo de finalización. No se puede confirmar si el texto está completo.</small>}
+                  {answerInfo?.usage?.total_tokens !== undefined && <small>Uso comunicado por el proveedor: {answerInfo.usage.total_tokens} tokens. No es un cálculo de coste.</small>}
+                  <small> {answerInfo?.mode === 'ai' ? answerInfo.sharedContext ? `${answerInfo.local ? 'IA local' : 'IA generativa'} · muestra operativa limitada. Requiere revisión humana.` : `${answerInfo.local ? 'IA local' : 'IA generativa'} · sin contexto del espacio.` : 'Reglas locales sobre una muestra de hasta 1.000 registros por tipo de tu empresa; sin proveedor externo.'} </small>
                 </div>
               </div>}
             </>
@@ -116,6 +120,10 @@ function AssistantPage({ workspace, onCreate, onSetup }) {
             <ArrowRight size={17} />
           </button>
         </form>
+        {pending && <button type="button" className="button button-outline" onClick={() => {
+          active.current?.abort(); active.current = null; setPending(false)
+          setError('Consulta cancelada. El proveedor puede haber comenzado el procesamiento; cancelarla no garantiza evitar su coste.')
+        }}>Cancelar consulta</button>}
       </section>
 
       <aside className="assistant-side">

@@ -1,5 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { integrationProviders, providerEndpoints } from './integration-providers.js'
+import { readJsonBounded } from './upstream.js'
+import { rateLimiter } from './security.js'
 import { integrationVault } from './integration-vault.js'
 
 class IntegrationError extends Error {
@@ -39,7 +41,7 @@ export function registerIntegrationRoutes(app, { db, authenticate, demoMode = fa
     user_id TEXT NOT NULL, version TEXT NOT NULL, verifier_cipher TEXT NOT NULL, expires_at INTEGER NOT NULL
   );`)
   const vault = integrationVault(keyPath, encryptionKey)
-  const flights = new Map(), limits = new Map()
+  const flights = new Map(), budget = rateLimiter(db)
   const row = (tenant, provider) => db.prepare('SELECT * FROM integration_settings WHERE tenant_id = ? AND provider = ?').get(tenant, provider)
   const context = (tenant, provider, type) => `${tenant}:${provider}:${type}`
   const seal = (value, tenant, provider, type) => vault.seal(value, context(tenant, provider, type))
@@ -59,11 +61,8 @@ export function registerIntegrationRoutes(app, { db, authenticate, demoMode = fa
   const noDemo = () => { if (demoMode) fail(403, 'La demo pública no admite credenciales ni cuentas externas. Usa la aplicación normal.') }
   const admin = (req) => { noDemo(); if (req.user.role !== 'admin') fail(403, 'Solo un administrador puede configurar o utilizar las integraciones externas.') }
   function consume(req) {
-    const now = Date.now(), key = `${req.tenantId}:${req.user.id}`
-    for (const [id, limit] of limits) if (limit.until < now) limits.delete(id)
-    const value = limits.get(key) || { count: 0, until: now + 60_000 }
-    if (++value.count > 30) fail(429, 'Límite de 30 operaciones de integración por minuto.')
-    limits.set(key, value)
+    try { budget('integration-user', `${req.tenantId}:${req.user.id}`, 30, 60_000) }
+    catch (error) { if (error.status === 429) fail(429, 'Límite de 30 operaciones de integración por minuto.'); throw error }
   }
   function status(tenant, id, isAdmin) {
     const value = row(tenant, id), meta = provider(id)
@@ -81,12 +80,13 @@ export function registerIntegrationRoutes(app, { db, authenticate, demoMode = fa
     try { await handler(req, res) }
     catch (error) {
       const code = error instanceof IntegrationError ? error.status : 503
+      if (code === 429) res.setHeader('Retry-After', '60')
       const message = error instanceof IntegrationError ? error.message : 'No se pudo completar la integración. Comprueba la conexión y la clave de cifrado del servidor.'
       if (publicCallback) {
         const flow = req.integrationFlow
         if (flow) db.prepare('UPDATE integration_settings SET last_error = ? WHERE tenant_id = ? AND provider = ? AND version = ?').run(message, flow.tenant_id, flow.provider, flow.version)
         res.status(code).type('html').send(page(false))
-      } else res.status(code).json({ error: message })
+      } else res.status(code).json({ error: message, requestId: req.requestId })
     }
   }
   function page(ok) {
@@ -97,13 +97,19 @@ export function registerIntegrationRoutes(app, { db, authenticate, demoMode = fa
     let response
     try { response = await fetchImpl(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(20_000) }) }
     catch { fail(502, 'No se pudo contactar con el proveedor. Comprueba la salida a Internet del servidor.') }
-    if (response.status === 429) fail(429, 'El proveedor ha limitado las solicitudes. Espera antes de reintentar.')
+    if (response.status === 429) { await response.body?.cancel().catch(() => {}); fail(429, 'El proveedor ha limitado las solicitudes. Espera antes de reintentar.') }
     return response
+  }
+  async function json(response, maxBytes = 2_097_152) {
+    // Outlook sendMail legitimately returns an empty 202 response.
+    if (response.status === 202 || response.status === 204) { await response.body?.cancel().catch(() => {}); return {} }
+    try { return await readJsonBounded(response, maxBytes) }
+    catch { fail(502, 'Respuesta del proveedor no válida o demasiado grande. Comprueba el destino antes de repetir una operación de envío.') }
   }
   async function tokenRequest(id, cfg, params) {
     const meta = providerEndpoints(id, cfg.microsoftTenant)
     const response = await request(meta.token, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: cfg.clientId, client_secret: cfg.clientSecret, ...(meta.microsoft ? { scope: meta.scopes } : {}), ...params }).toString() })
-    const payload = await response.json().catch(() => ({}))
+    const payload = await json(response, 65_536)
     if (!response.ok || payload.ok === false || typeof payload.access_token !== 'string' || !payload.access_token || payload.access_token.length > 16384 || /[^!-~]/.test(payload.access_token)) fail(422, 'El proveedor rechazó la autorización. Revisa las credenciales, los permisos y la URL de retorno, o vuelve a conectar.')
     const seconds = Number(payload.expires_in || 0)
     if (!Number.isFinite(seconds) || seconds < 0 || seconds > 366 * 86400) fail(502, 'La respuesta OAuth del proveedor no es válida.')
@@ -141,8 +147,8 @@ export function registerIntegrationRoutes(app, { db, authenticate, demoMode = fa
       return request(url, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token.accessToken}`, 'Content-Type': 'application/json', ...(url.startsWith('https://graph.microsoft.com/') ? { Prefer: 'outlook.timezone="UTC"' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) })
     }
     let response = await send()
-    if (response.status === 401) { token = await freshToken(value, true); response = await send() }
-    const result = await response.json().catch(() => ({}))
+    if (response.status === 401) { await response.body?.cancel().catch(() => {}); token = await freshToken(value, true); response = await send() }
+    const result = await json(response)
     if ([401, 403].includes(response.status) || result.ok === false) fail(422, 'El proveedor rechazó la operación. Revisa los permisos, la pertenencia al canal y la autorización.')
     if (!response.ok) fail(502, 'El proveedor no pudo completar la operación. Comprueba el destino y su disponibilidad.')
     return result
@@ -228,7 +234,7 @@ export function registerIntegrationRoutes(app, { db, authenticate, demoMode = fa
     let revoked = false
     try {
       if (token && req.params.provider === 'google') revoked = (await request('https://oauth2.googleapis.com/revoke', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: token.refreshToken || token.accessToken }).toString() })).ok
-      if (token && req.params.provider === 'slack') { const response = await request('https://slack.com/api/auth.revoke', { method: 'POST', headers: { Authorization: `Bearer ${token.accessToken}` } }); revoked = response.ok && (await response.json()).ok === true }
+      if (token && req.params.provider === 'slack') { const response = await request('https://slack.com/api/auth.revoke', { method: 'POST', headers: { Authorization: `Bearer ${token.accessToken}` } }); revoked = response.ok && (await json(response)).ok === true }
     } catch { /* Still disconnected locally; tell the operator to revoke upstream. */ }
     recordActivity(req.user, 'disconnected', 'integration', req.params.provider, `Desconectó ${provider(req.params.provider).name}.`)
     res.json({ disconnected: true, revoked, notice: revoked ? 'Desconectada y autorización revocada.' : 'Desconectada localmente. Retira también el consentimiento en las aplicaciones autorizadas del proveedor.' })

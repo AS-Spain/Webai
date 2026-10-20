@@ -444,7 +444,7 @@ function App() {
       : page
 
   const canCreateCurrent = createTarget === 'invitations'
-    ? can(user.role, 'users:manage')
+    ? !setupStatus?.demoMode && can(user.role, 'users:manage')
     : can(user.role, `${createTarget}:create`)
 
   const canManageProjects = can(user.role, 'projects:delete')
@@ -775,7 +775,8 @@ function App() {
               team={workspace.team}
               tasks={workspace.tasks}
               currentUserId={user.id}
-              canInvite={can(user.role, 'users:manage')}
+              canInvite={!setupStatus?.demoMode && can(user.role, 'users:manage')}
+              demoMode={setupStatus?.demoMode}
               invitations={workspace.invitations}
               inviteUrl={inviteUrl}
               inviteEmailSent={inviteEmailSent}

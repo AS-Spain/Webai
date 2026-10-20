@@ -86,5 +86,17 @@ No expongas Ollama o LM Studio sin autenticación a Internet. Para otro equipo u
 - No se cambia automáticamente de proveedor local a nube si algo falla.
 - Solo se incluyen datos de trabajo cuando el admin lo autoriza y el usuario marca su casilla. Los prompts enviados por el usuario pueden contener datos sensibles aunque no se adjunte contexto.
 - Las claves opcionales se cifran como las claves de nube. Una instalación local sin token no genera ni necesita una clave maestra para esa conexión.
-- El timeout local es de 120 segundos para permitir la primera carga del modelo. Sigue existiendo el límite de 20 llamadas por usuario/empresa por minuto.
+- El timeout local es de 120 segundos para permitir la primera carga del modelo. El timeout de nube es 25 s. Se aplican 20 llamadas por usuario/minuto, 60 por empresa/minuto, 2 llamadas simultáneas por empresa y 8 por proceso. Los límites generales de API también se aplican.
 - Las pruebas del repositorio comprueban el protocolo HTTP contra un servidor local de prueba y respuestas controladas. **No se han instalado ni ejecutado pesos de un modelo real en Arena.**
+
+
+## Límites y significado del estado
+
+- «Consultar modelos» consulta el catálogo, **no realiza inferencia** ni guarda una conexión. «Probar y activar» llama a `/chat/completions` y solo guarda al recibir texto válido y no truncado. La fecha visible es histórica: no promete disponibilidad actual.
+- Cada pregunta exige elegir IA; sin proveedor o con errores no se simula IA ni se cambia a reglas silenciosamente. Reintento manual: no se repiten automáticamente POST que pueden generar costes.
+- El servidor lee como máximo 256 KiB para una respuesta de chat y 1 MiB para el catálogo. Devuelve hasta 16.000 caracteres de texto y avisa si es parcial (`finish_reason=length` o recorte). Comunica uso solo si lo informa el proveedor; no inventa costes. Si falta finish_reason, lo indica como desconocido.
+- El contexto opcional contiene hasta 25 filas por tipo y un máximo total de 12.000 caracteres JSON; no es un cálculo exacto de tokens. Tu modelo debe soportar el prompt y el margen de 800 tokens de salida. Acota la pregunta/contexto si su ventana es menor.
+- Cancelar desde la UI aborta el fetch del servidor y libera sus recursos. **No garantiza** detener el trabajo remoto ni evitar su coste.
+- Cambiar/desconectar configuración o revocar al admin mientras se prueba impide guardar una conexión obsoleta; una petición ya enviada no se puede des-enviar.
+- `V2_AI_ALLOWED_ORIGINS` se valida al arrancar: sin rutas, comodines, credenciales ni metadatos/link-local/multicast literales. Se permiten redes privadas elegidas explícitamente para tus motores; eso no es una prohibición de toda IP privada. Usa IPs estáticas o DNS interno controlado y un firewall de salida. No hay pinning DNS/transporte personalizado para orígenes autorizados: no autorices dominios controlados por terceros o DNS mutable no confiable.
+- **Demo pública:** no hay llamadas a modelos por defecto, incluso aunque selecciones el perfil de ejemplo admin. El operador puede optar expresamente por `V2_DEMO_AI_ENABLED=true` con un motor desechable sin claves y presupuesto de recursos. No lo actives contra modelos o redes sensibles. Los roles de demo son públicos, no credenciales de operador.
