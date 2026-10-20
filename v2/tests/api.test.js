@@ -37,7 +37,9 @@ test('API v2: autenticación, permisos, empresas e invitaciones', async (suite) 
   let tenantId, project, task
   try {
     await suite.test('el bootstrap requiere token y solo se usa una vez', async () => {
-      assert.equal((await request('/tasks')).status, 401)
+      const anonymous = await request('/tasks')
+      assert.equal(anonymous.status, 401)
+      assert.equal(anonymous.headers.get('set-cookie'), null, 'Un 401 tardío no debe borrar una cookie de un login posterior')
       assert.equal((await request('/ai/config')).status, 401)
       assert.equal((await request('/ai/ask', { method: 'POST', body: { question: 'hola', mode: 'rules' } })).status, 401)
       assert.equal((await request('/setup/status')).body.needsSetup, true)
@@ -53,7 +55,10 @@ test('API v2: autenticación, permisos, empresas e invitaciones', async (suite) 
       assert.match(created.headers.get('set-cookie'), /SameSite=Strict/)
       assert.equal((await request('/auth/demo', { method: 'POST' })).status, 404)
       assert.equal((await request('/setup/bootstrap', { method: 'POST', body })).status, 403)
-      assert.equal((await request('/auth/me', { cookie: admin })).body.user.role, 'admin')
+      const restored = await request('/auth/me', { cookie: admin })
+      assert.equal(restored.body.user.role, 'admin')
+      assert.equal(restored.body.sessionToken, undefined)
+      assert.equal(restored.headers.get('cache-control'), 'no-store')
       tenantId = db.prepare('SELECT id FROM tenants').get().id
       for (const role of ['member', 'viewer', 'manager']) addUser(role, tenantId, role)
       db.prepare('INSERT INTO tenants (id, name) VALUES (?, ?)').run('other-tenant', 'Empresa B')

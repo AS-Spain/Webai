@@ -33,13 +33,13 @@ npm run build
 npm run demo
 ```
 
-Abre **http://localhost:3003** (en Arena, la vista previa **Northstar v2 · Demo**, puerto **3003**). Elige un perfil y entra con un clic, sin correo ni contraseña. No se inicia ni se vuelve a intentar una sesión automáticamente al cargar la página. La franja **DEMO · Datos de ejemplo** permite cambiar entre administrador, gestor, miembro y solo lectura. Si sales, podrás volver a entrar con un clic.
+Abre **http://localhost:3003** (en Arena, la vista previa **Northstar v2 · Demo**, puerto **3003**). La primera vez elige un perfil y entra con un clic, sin correo ni contraseña. En los siguientes accesos se recupera la sesión válida al recargar; no se vuelve a pedir entrar innecesariamente. La franja **DEMO · Datos de ejemplo** permite cambiar entre administrador, gestor, miembro y solo lectura. Si sales, podrás volver a entrar con un clic.
 
 La demo tiene su propio SQLite (`v2/data/webai-demo.sqlite` por defecto), su cookie `webai_v2_demo_session` y su variable `V2_DEMO_DB_PATH`. **Ignora `V2_DB_PATH`** para no abrir accidentalmente una base privada. Se rechaza configurar ambos modos con la misma ruta de SQLite. La base guarda además su modo: no se permite abrir una base privada como demo ni una base con usuarios de ejemplo como aplicación normal, aunque se cambie su ruta o se utilice un alias.
 
 Es una demo compartida: no introduzcas datos reales ni secretos. El envío SMTP está desactivado. La configuración de IA de la demo solo admite servidores locales sin claves; las conexiones privadas y las claves de pago pertenecen a la aplicación normal. No se permite reutilizar claves antiguas guardadas en una base demo.
 
-Para funcionar también cuando el navegador bloquea cookies de terceros en la vista previa, la demo usa una sesión de prueba **solo en memoria del navegador**, que se renueva automáticamente ante una caducidad. No se guarda en localStorage/sessionStorage ni se transmite en URLs. Este mecanismo **no está habilitado en la aplicación normal**. Al recargar o cerrar sesión, se vuelve a la pantalla de perfiles. Ante un fallo permanente de autenticación se detiene tras una renovación y un reintento; puedes volver a entrar manualmente. Una renovación antigua no puede cerrar una sesión nueva. En desarrollo, la sesión en memoria sobrevive a Fast Refresh de Vite, incluso con cookies bloqueadas; no se guarda en localStorage ni sessionStorage.
+Para funcionar también cuando el navegador bloquea cookies de terceros en la vista previa, la demo usa una sesión de prueba **solo en memoria del navegador**, que se renueva automáticamente ante una caducidad. El token no se guarda en localStorage/sessionStorage ni se transmite en URLs. Este mecanismo **no está habilitado en la aplicación normal**. Al recargar se recupera la sesión de la cookie. Si las cookies están bloqueadas, la demo recuerda únicamente el nombre del perfil público en sessionStorage y puede recuperarlo una sola vez por carga; nunca guarda el token. Al cerrar sesión se elimina también esa preferencia y se vuelve al selector de perfiles. Ante un fallo permanente de autenticación se detiene tras una renovación y un reintento; puedes volver a entrar manualmente. Una renovación antigua no puede cerrar una sesión nueva. En desarrollo, la sesión en memoria sobrevive a Fast Refresh de Vite, incluso con cookies bloqueadas; no se guarda en localStorage ni sessionStorage.
 
 ### Aplicación normal
 
@@ -58,7 +58,13 @@ Abre **http://localhost:3002** (vista previa **Northstar v2 · Aplicación norma
 - `npm run dev`: web normal **5174**, API **3002**.
 - `npm run dev:demo`: demo **5175**, API **3003**. Los archivos de datos, SQLite y secretos no se vigilan. Para una vista estable sin el cliente de desarrollo ni sus reconexiones HMR, usa `npm run build` y `npm run demo` en **3003**.
 
-El lanzador espera a que la API responda en el modo correcto antes de anunciar la URL de Vite. Vite reenvía `/api` al backend correspondiente; el navegador nunca llama a un `localhost` remoto. No se cargan archivos `.env` automáticamente.
+El lanzador espera a que la API responda en el modo correcto antes de anunciar la URL de Vite. Vite reenvía `/api` al backend correspondiente **sin cambiar el Host público** (`changeOrigin: false`), para que las cookies HTTPS de la vista previa mantengan `SameSite=None; Secure; Partitioned` también a través del proxy; el navegador nunca llama a un `localhost` remoto. No se cargan archivos `.env` automáticamente.
+
+### Persistencia del acceso
+
+La aplicación normal mantiene la sesión en una cookie **HttpOnly** y SQLite, con caducidad de ocho horas. Tras entrar, crear el administrador o aceptar una invitación, el cliente comprueba `/api/auth/me` antes de mostrar datos privados. Si el navegador rechaza la cookie, muestra el motivo en el formulario en vez de simular un acceso y expulsarte después. No hay tokens privados en almacenamiento del navegador ni una recuperación automática de credenciales.
+
+Las respuestas 401 no borran cookies: una respuesta antigua no debe eliminar la cookie de un login posterior. El cierre de sesión explícito sí revoca la sesión y elimina la cookie. En la vista previa se limpian además las cookies Strict de versiones anteriores al crear o cerrar una sesión. Si se bloquean incluso las cookies particionadas, usa una pestaña propia o permite cookies; en producción es necesario HTTPS.
 
 ## Crear un espacio limpio
 

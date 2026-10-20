@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { api, setDemoSession } from '../src/lib/api.js'
+import { api, setDemoSession, confirmPrivateSession, startDemoSession, getDemoSessionResult, getDemoRoleHint } from '../src/lib/api.js'
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status })
 test('la demo renueva una sola sesión y repite las peticiones sin depender de cookies', async () => {
@@ -183,4 +183,95 @@ test('una petición cancelada al navegar no expulsa la sesión demo activa', asy
     assert.equal(expired, 0)
     assert.equal((await api('/overview')).ok, true)
   } finally { globalThis.fetch = previous; globalThis.window = previousWindow; setDemoSession(null) }
+})
+
+test('la demo recuerda solo el perfil público y el logout lo elimina', () => {
+  const previousWindow = globalThis.window
+  const values = new Map()
+  globalThis.window = { sessionStorage: { getItem: (key) => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) } }
+  try {
+    setDemoSession({ sessionToken: 'never-store-this-secret', user: { role: 'viewer' } })
+    assert.deepEqual([...values.values()], ['viewer'])
+    setDemoSession(null)
+    assert.equal(values.size, 0)
+  } finally { globalThis.window = previousWindow; setDemoSession(null) }
+})
+
+test('el login privado verifica la cookie antes de mostrar el espacio', async () => {
+  const previous = globalThis.fetch
+  setDemoSession({ sessionToken: 'old-demo', user: { role: 'admin' } })
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/auth/me')
+    assert.equal(options.credentials, 'same-origin')
+    assert.equal(options.cache, 'no-store')
+    assert.equal(options.headers.Authorization, undefined)
+    return json({ user: { id: 'private-user' }, company: 'Private' })
+  }
+  try { assert.equal((await confirmPrivateSession('private-user')).user.id, 'private-user') }
+  finally { globalThis.fetch = previous; setDemoSession(null) }
+})
+
+test('una cookie rechazada no se presenta como un login correcto que luego expulsa', async () => {
+  const previous = globalThis.fetch
+  globalThis.fetch = async () => json({ error: 'Inicia sesión' }, 401)
+  try { await assert.rejects(confirmPrivateSession('private-user'), /cookie de sesión/) }
+  finally { globalThis.fetch = previous; setDemoSession(null) }
+})
+
+test('una cookie de otra cuenta no confirma el nuevo login', async () => {
+  const previous = globalThis.fetch
+  globalThis.fetch = async () => json({ user: { id: 'previous-account' } })
+  try { await assert.rejects(confirmPrivateSession('new-account'), /cookie de sesión/) }
+  finally { globalThis.fetch = previous; setDemoSession(null) }
+})
+
+test('restauraciones demo simultáneas comparten una sola entrada', async () => {
+  const previous = globalThis.fetch
+  let finish, calls = 0
+  setDemoSession(null)
+  globalThis.fetch = async (url) => {
+    assert.equal(url, '/api/auth/demo')
+    calls += 1
+    return new Promise((resolve) => { finish = resolve })
+  }
+  try {
+    const first = startDemoSession('viewer'), second = startDemoSession('viewer')
+    assert.equal(first, second)
+    finish(json({ sessionToken: 'restored', user: { role: 'viewer' }, company: 'Demo' }))
+    await Promise.all([first, second])
+    assert.equal(calls, 1)
+    assert.equal(getDemoSessionResult().user.role, 'viewer')
+  } finally { globalThis.fetch = previous; setDemoSession(null) }
+})
+
+test('un logout durante la restauración demo no puede volver a entrar solo', async () => {
+  const previous = globalThis.fetch
+  let finish
+  setDemoSession(null)
+  globalThis.fetch = async () => new Promise((resolve) => { finish = resolve })
+  try {
+    const entry = startDemoSession('viewer')
+    setDemoSession(null)
+    finish(json({ sessionToken: 'late', user: { role: 'viewer' } }))
+    await assert.rejects(entry, /perfil demo ha cambiado/)
+    assert.equal(getDemoSessionResult(), null)
+  } finally { globalThis.fetch = previous; setDemoSession(null) }
+})
+
+test('los perfiles demo no válidos en el navegador nunca se restauran', () => {
+  const previousWindow = globalThis.window
+  globalThis.window = { sessionStorage: { getItem: () => 'private-superuser' } }
+  try { assert.equal(getDemoRoleHint(), null) }
+  finally { globalThis.window = previousWindow }
+})
+
+test('el bloqueo de almacenamiento no rompe la recuperación por cookie', () => {
+  const previousWindow = globalThis.window
+  globalThis.window = Object.defineProperty({}, 'sessionStorage', { get() { throw new Error('Storage blocked') } })
+  try {
+    setDemoSession({ sessionToken: 'memory-only', user: { role: 'viewer' } })
+    assert.equal(getDemoRoleHint(), null)
+    assert.equal(getDemoSessionResult().user.role, 'viewer')
+    setDemoSession(null)
+  } finally { globalThis.window = previousWindow; setDemoSession(null) }
 })

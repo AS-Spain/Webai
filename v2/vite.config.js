@@ -9,7 +9,12 @@ export default defineConfig({
     strictPort: true,
     watch: { ignored: ['**/data/**', '**/*.sqlite*', '**/*.bootstrap-*.local', '**/*.key'] },
     allowedHosts: ['.e2b.app'],
-    proxy: { '/api': `http://127.0.0.1:${process.env.PORT || (process.env.DEMO_MODE === 'true' ? 3003 : 3002)}` },
+    // String targets make Vite rewrite Host to 127.0.0.1. Preserve the browser
+    // host so the API can set the HTTPS/partitioned preview cookie correctly.
+    proxy: { '/api': {
+      target: `http://127.0.0.1:${process.env.PORT || (process.env.DEMO_MODE === 'true' ? 3003 : 3002)}`,
+      changeOrigin: false,
+    } },
   },
   preview: { host: '0.0.0.0', port: 4174, allowedHosts: ['.e2b.app'] },
 })

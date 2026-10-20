@@ -52,7 +52,7 @@ function authorizeWrite(req, res, next) {
 
 app.get('/api/auth/me', authenticate, (req, res) => {
   const company = db.prepare('SELECT name FROM tenants WHERE id = ?').get(req.tenantId).name
-  res.json({ user: req.user, company })
+  res.json({ user: req.user, company, ...(demoMode ? { demoMode: true, sessionToken: req.sessionToken } : {}) })
 })
 
 app.use('/api', authenticate)

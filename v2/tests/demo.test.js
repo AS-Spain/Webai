@@ -23,7 +23,7 @@ async function request(route, { method = 'GET', body, token, cookie, host } = {}
     const req = httpRequest(`${base}${route}`, { method, headers: { Host: host, 'Content-Type': 'application/json' } }, (res) => {
       let data = ''
       res.on('data', (part) => { data += part })
-      res.on('end', () => resolve({ status: res.statusCode, headers: new Headers({ 'set-cookie': res.headers['set-cookie']?.[0] || '' }), body: data ? JSON.parse(data) : null }))
+      res.on('end', () => resolve({ status: res.statusCode, cookieHeaders: res.headers['set-cookie'] || [], headers: new Headers({ 'set-cookie': res.headers['set-cookie']?.at(-1) || '' }), body: data ? JSON.parse(data) : null }))
     })
     req.on('error', reject)
     if (body) req.write(JSON.stringify(body))
@@ -59,13 +59,18 @@ test('demo separada: entrada sin contraseña, cookies bloqueadas y protección d
       assert.match(result.headers.get('set-cookie'), /^webai_v2_demo_session=/)
       token = result.body.sessionToken
       assert.ok(token.length >= 32)
-      assert.equal((await request('/auth/me', { token })).status, 200)
+      const restored = await request('/auth/me', { cookie: `webai_v2_demo_session=${token}` })
+      assert.equal(restored.status, 200)
+      assert.equal(restored.body.sessionToken, token)
+      assert.equal(restored.body.demoMode, true)
       assert.equal((await request('/overview', { token })).status, 200)
       assert.equal((await request('/overview', { cookie: `webai_v2_session=${token}` })).status, 401)
     })
     await suite.test('una sesión caducada se puede sustituir sin pedir una contraseña', async () => {
       db.prepare('UPDATE sessions SET expires_at = 0').run()
-      assert.equal((await request('/overview', { token })).status, 401)
+      const expired = await request('/overview', { token })
+      assert.equal(expired.status, 401)
+      assert.equal(expired.headers.get('set-cookie'), null)
       const result = await request('/auth/demo', { method: 'POST', body: { role: 'admin' } })
       token = result.body.sessionToken
       assert.equal((await request('/overview', { token })).status, 200)
@@ -82,6 +87,11 @@ test('demo separada: entrada sin contraseña, cookies bloqueadas y protección d
       assert.match(cookie, /Secure/)
       assert.match(cookie, /SameSite=None/)
       assert.match(cookie, /Partitioned/)
+      assert.equal(result.cookieHeaders.length, 2)
+      assert.match(result.cookieHeaders[0], /Max-Age=0/)
+      assert.doesNotMatch(result.cookieHeaders[0], /Partitioned/)
+      assert.match(result.cookieHeaders[1], /Partitioned/)
+      assert.doesNotMatch(result.cookieHeaders[1], /Max-Age=0/)
       token = result.body.sessionToken
       assert.equal((await request('/ai/config', { token })).body.demoMode, true)
       assert.ok((await request('/ai/config', { token })).body.providers.every((provider) => provider.local))

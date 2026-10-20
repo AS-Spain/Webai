@@ -4,7 +4,7 @@ import { ArrowRight, Bell, CheckCircle2, ChevronDown, CircleHelp, Command, Compa
 import { navGroups, pageMeta, can } from './lib/config.js'
 import { formatDate, initials } from './lib/format.js'
 import DemoWelcome from './components/DemoWelcome.jsx'
-import { api, setDemoSession } from './lib/api.js'
+import { api, setDemoSession, getDemoRoleHint, getDemoSessionResult, startDemoSession, confirmPrivateSession } from './lib/api.js'
 import { useClock } from './hooks/useClock.js'
 import { useSearch } from './hooks/useSearch.js'
 import { useWorkspace } from './hooks/useWorkspace.js'
@@ -74,8 +74,24 @@ function App() {
         if (status.demoMode || !status.needsSetup || inviteToken) setBootstrapToken('')
         document.title = status.demoMode ? 'Northstar v2 · DEMO' : 'Northstar v2 · Aplicación normal'
         if (status.demoMode) {
-          // A fresh load waits for a click. Fast Refresh must not clear an
-          // existing in-memory session while it preserves the logged-in UI.
+          let result = getDemoSessionResult()
+          if (!result) {
+            const role = getDemoRoleHint()
+            try {
+              result = await api('/auth/me', { signal })
+              if (signal.aborted) return
+              // Another tab may have selected a different profile on its cookie.
+              if (role && result.user.role !== role) result = await startDemoSession(role)
+              else setDemoSession(result)
+            } catch (requestError) {
+              if (signal.aborted) return
+              if (requestError.status !== 401) throw requestError
+              if (!role) return
+              // Public demo only: one restoration attempt for the selected role.
+              result = await startDemoSession(role)
+            }
+          }
+          if (!signal.aborted) { setUser(result.user); setCompany(result.company) }
           return
         }
         if (inviteToken) {
@@ -120,8 +136,7 @@ function App() {
     setBooting(true)
     setError('')
     try {
-      const result = await api('/auth/demo', { method: 'POST', body: JSON.stringify({ role }) })
-      setDemoSession(result)
+      const result = await startDemoSession(role)
       setModal('')
       setActivityOpen(false)
       setSearch('')
@@ -155,10 +170,10 @@ function App() {
         }),
       })
 
-      setDemoSession(null)
-      setUser(result.user)
+      const verified = await confirmPrivateSession(result.user.id)
+      setUser(verified.user)
       setAuthMode('login')
-      setCompany(result.company)
+      setCompany(verified.company)
 
     } catch (requestError) {
       setError(requestError.message)
@@ -180,8 +195,9 @@ function App() {
       setBootstrapToken('')
       setSetupStatus((status) => ({ ...status, needsSetup: false, bootstrapEnabled: false }))
       setAuthMode('login')
-      setUser(result.user)
-      setCompany(result.company)
+      const verified = await confirmPrivateSession(result.user.id)
+      setUser(verified.user)
+      setCompany(verified.company)
     } catch (requestError) {
       setError(requestError.message)
     }
@@ -204,9 +220,10 @@ function App() {
       })
 
       window.history.replaceState({}, '', window.location.pathname)
-      setUser(result.user)
       setAuthMode('login')
-      setCompany(result.company)
+      const verified = await confirmPrivateSession(result.user.id)
+      setUser(verified.user)
+      setCompany(verified.company)
 
     } catch (requestError) {
       setError(requestError.message)

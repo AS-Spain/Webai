@@ -10,15 +10,24 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
     if (demoMode && req.headers.authorization?.startsWith('Bearer ')) return req.headers.authorization.slice(7)
     return req.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${sessionCookie}=`))?.slice(sessionCookie.length + 1)
   }
+  const isPreview = (req) => /^[a-z0-9-]+\.e2b\.app$/i.test((req.get('host') || '').split(':')[0])
   const cookieAttributes = (req) => {
-    const preview = /^[a-z0-9-]+\.e2b\.app$/i.test((req.get('host') || '').split(':')[0])
-    return preview ? '; Secure; SameSite=None; Partitioned' : `; SameSite=Strict${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
+    return isPreview(req) ? '; Secure; SameSite=None; Partitioned' : `; SameSite=Strict${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
   }
-  const clearCookie = (req, res) => res.setHeader('Set-Cookie', `${sessionCookie}=; HttpOnly; Path=/; Max-Age=0${cookieAttributes(req)}`)
+  const clearLegacyCookie = (req, res) => {
+    if (isPreview(req)) res.append('Set-Cookie', `${sessionCookie}=; HttpOnly; Path=/; Max-Age=0; Secure; SameSite=Strict`)
+  }
+  const clearCookie = (req, res) => {
+    res.setHeader('Set-Cookie', `${sessionCookie}=; HttpOnly; Path=/; Max-Age=0${cookieAttributes(req)}`)
+    clearLegacyCookie(req, res)
+  }
   const sessionDuration = 8 * 60 * 60 * 1000
   const userByEmail = db.prepare('SELECT * FROM users WHERE email = ?')
   const setSessionCookie = (req, res, sessionId) => {
-    res.setHeader('Set-Cookie', `${sessionCookie}=${sessionId}; HttpOnly; Path=/; Max-Age=${sessionDuration / 1000}${cookieAttributes(req)}`)
+    // Clear the legacy cookie first: browsers without CHIPS support treat both
+    // variants as the same cookie, so the new session must be written last.
+    clearLegacyCookie(req, res)
+    res.append('Set-Cookie', `${sessionCookie}=${sessionId}; HttpOnly; Path=/; Max-Age=${sessionDuration / 1000}${cookieAttributes(req)}`)
   }
 
   function establishSession(req, res, user) {
@@ -44,7 +53,7 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
   }
 
-  app.use('/api/setup', (req, res, next) => {
+  app.use(['/api/setup', '/api/auth'], (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store')
     res.setHeader('Pragma', 'no-cache')
     res.setHeader('X-Robots-Tag', 'noindex, nofollow')
@@ -201,7 +210,7 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
     const session = sessionId && sessions.get(sessionId)
     if (!session || session.expiresAt <= Date.now()) {
       if (sessionId) sessions.delete(sessionId)
-      clearCookie(req, res)
+      // Never clear cookies on a late 401: it could erase a newer login.
       return res.status(401).json({ code: sessionId ? 'SESSION_EXPIRED' : 'AUTH_REQUIRED', error: sessionId ? 'Tu sesión ha caducado. Inicia sesión de nuevo.' : 'Inicia sesión para acceder a tu espacio de trabajo.' })
     }
     const user = db.prepare('SELECT id, tenant_id, name, email, role, status FROM users WHERE id = ?').get(session.userId)
@@ -211,6 +220,7 @@ export function registerAuthRoutes(app, db, demoMode, recordActivity, bootstrap)
       return res.status(401).json({ error: 'Tu cuenta está desactivada. Contacta con un administrador.' })
     }
     req.user = user
+    req.sessionToken = sessionId
     req.tenantId = session.tenantId
     next()
   }

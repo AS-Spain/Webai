@@ -6,13 +6,52 @@ if (import.meta.hot) {
   // Dependency updates can re-evaluate this module without invoking dispose.
   import.meta.hot.data.demoSessionState = state
 }
+const demoRoles = new Set(['admin', 'manager', 'member', 'viewer'])
+const demoRoleKey = 'northstar-v2-demo-role'
+export function getDemoRoleHint() {
+  try {
+    const role = typeof window !== 'undefined' && window.sessionStorage?.getItem(demoRoleKey)
+    return demoRoles.has(role) ? role : null
+  } catch { return null }
+}
+export function getDemoSessionResult() { return state.demoSession?.result || null }
 export function setDemoSession(result) {
   state.generation += 1
-  state.demoSession = result?.sessionToken ? { token: result.sessionToken, role: result.user.role } : null
+  state.demoSession = result?.sessionToken ? { token: result.sessionToken, role: result.user.role, result } : null
+  // Only the public profile name survives a reload; never store a session token.
+  try {
+    if (typeof window !== 'undefined') {
+      if (state.demoSession && demoRoles.has(state.demoSession.role)) window.sessionStorage?.setItem(demoRoleKey, state.demoSession.role)
+      else window.sessionStorage?.removeItem(demoRoleKey)
+    }
+  } catch { /* Cookie-based restoration still works when storage is unavailable. */ }
+}
+export function startDemoSession(role) {
+  if (state.entry?.generation === state.generation && state.entry.role === role) return state.entry.promise
+  const entry = { generation: state.generation, role, promise: null }
+  state.entry = entry
+  entry.promise = api('/auth/demo', { method: 'POST', body: JSON.stringify({ role }) }).then((result) => {
+    if (entry.generation !== state.generation) throw new Error('El perfil demo ha cambiado. Vuelve a intentar la acción.')
+    if (!result.sessionToken || result.user?.role !== role) throw new Error('La sesión demo no es válida. Elige de nuevo un perfil.')
+    setDemoSession(result)
+    return result
+  }).finally(() => { if (state.entry === entry) state.entry = null })
+  return entry.promise
+}
+export async function confirmPrivateSession(expectedUserId) {
+  setDemoSession(null)
+  try {
+    const result = await api('/auth/me')
+    if (result.user?.id !== expectedUserId) throw Object.assign(new Error('Cookie no actualizada'), { status: 401 })
+    return result
+  } catch (error) {
+    if (error.status === 401) throw new Error('El servidor ha validado tus datos, pero no se ha podido confirmar la cookie de sesión. Permite las cookies de esta aplicación o ábrela en una pestaña propia. En producción utiliza HTTPS.')
+    throw error
+  }
 }
 function send(path, options = {}) {
   return fetch(`/api${path}`, {
-    credentials: 'same-origin', ...options,
+    credentials: 'same-origin', cache: 'no-store', ...options,
     headers: {
       'Content-Type': 'application/json',
       ...(state.demoSession ? { Authorization: `Bearer ${state.demoSession.token}` } : {}),
