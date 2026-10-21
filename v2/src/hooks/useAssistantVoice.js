@@ -32,12 +32,13 @@ export function useAssistantVoice(onTranscript, enabled = true) {
     const instance = new Recognition()
     instance.lang = language; instance.continuous = true; instance.interimResults = true
     instance.onresult = (event) => {
-      if (!enabledRef.current || document.hidden) return
+      if (recognition.current !== instance || !enabledRef.current || document.hidden) return
       const text = Array.from(event.results).map((result) => result[0].transcript).join(' ')
       callback.current(`${prefix}${prefix ? ' ' : ''}${text}`.slice(0, 2000))
     }
-    instance.onend = () => { setListening(false); recognition.current = null }
+    instance.onend = () => { if (recognition.current === instance) { setListening(false); recognition.current = null } }
     instance.onerror = (event) => {
+      if (recognition.current !== instance) return
       const message = { 'not-allowed': 'No se ha autorizado el micrófono. Revisa los permisos del navegador y de la vista incrustada.', 'audio-capture': 'No se encuentra un micrófono disponible.', 'network': 'El servicio de dictado del navegador no está disponible.', 'no-speech': 'No se detectó voz. Puedes volver a intentarlo.', 'language-not-supported': 'El navegador no admite el idioma seleccionado.' }[event.error]
       if (event.error !== 'aborted') setError(message || 'No se pudo completar el dictado. Puedes seguir escribiendo.')
       setListening(false)
@@ -53,7 +54,7 @@ export function useAssistantVoice(onTranscript, enabled = true) {
     const item = new window.SpeechSynthesisUtterance(text.slice(0, 16000))
     item.lang = language
     item.onend = () => { if (utterance.current === item) { setSpeaking(false); utterance.current = null } }
-    item.onerror = (event) => { setSpeaking(false); if (!['canceled', 'interrupted'].includes(event.error)) setError('El navegador no pudo reproducir la voz. Usa el botón Leer para volver a intentarlo.') }
+    item.onerror = (event) => { if (utterance.current !== item) return; utterance.current = null; setSpeaking(false); if (!['canceled', 'interrupted'].includes(event.error)) setError('El navegador no pudo reproducir la voz. Usa el botón Leer para volver a intentarlo.') }
     utterance.current = item
     try { window.speechSynthesis.speak(item); setSpeaking(true) } catch { setSpeaking(false); setError('No se pudo iniciar la lectura en voz alta.') }
   }
