@@ -1,0 +1,22 @@
+node_modules/
+dist/
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+.env
+.env.*
+
+# Local encryption material must never be committed.
+ai-master.key
+
+# One-time initial administrator credentials (including custom database paths).
+*.bootstrap-token.local
+*.bootstrap-link.local
+
+# OAuth application credentials and external-account tokens.
+integrations-*.key
+
+# Template only: all real .env files remain ignored.
+!.env.example

@@ -1,0 +1,256 @@
+# Northstar Work · v2
+
+Versión independiente de la aplicación. **La versión original de la raíz no se ha modificado.** No es necesario sustituir sus archivos ni migrar su base de datos para probar esta versión.
+
+## Separación entre versiones
+
+| Recurso | Original | v2 |
+| --- | --- | --- |
+| Código | Raíz del repositorio | `v2/` |
+| Interfaz en desarrollo | `5173` | `5174` |
+| API por defecto | `3001` | `3002` |
+| Base de datos por defecto | `data/webai.sqlite` | `v2/data/webai-live.sqlite` |
+| Cookie | `webai_session` | `webai_v2_private_session` |
+| Tema guardado | — | `northstar-v2-theme` |
+
+La v2 **no lee `DB_PATH`**: usa `V2_DB_PATH` para evitar reutilizar por accidente una variable de la versión original. No apuntes `V2_DB_PATH` a la base de datos original. Ambas versiones pueden ejecutarse al mismo tiempo con sus puertos predeterminados.
+
+## Demo y aplicación normal: dos entornos independientes
+
+Requisitos: Node.js **22.12 o posterior** y npm. `better-sqlite3` puede necesitar herramientas C/C++ y cabeceras de Node si no hay un binario para tu plataforma.
+
+Desde la raíz del repositorio:
+
+```sh
+cd v2
+npm ci
+npm run build
+```
+
+### Probar sin registro
+
+```sh
+npm run demo
+```
+
+Abre **http://localhost:3003** (vista previa del puerto **3003**) o usa `npm run dev:demo` para la web en **5175**. **La demo es pública y abre directamente, sin pantalla de inicio de sesión, contraseñas, cookies ni tokens.** El perfil inicial es administrador de ejemplo. La franja **DEMO · Datos de ejemplo** permite cambiar a gestor, miembro o solo lectura; la API aplica los permisos del perfil elegido. No hay botón de cerrar sesión en una demo pública.
+
+El perfil se envía como parámetro público `demoRole` (no es una credencial). Solo su nombre puede recordarse en sessionStorage; si se bloquea también el almacenamiento, la demo sigue abriendo como administrador de ejemplo. La carga y recarga no crean sesiones en SQLite. Los endpoints de entrada de versiones anteriores se mantienen por compatibilidad, pero la interfaz no los necesita.
+
+La demo tiene su propio SQLite (`v2/data/webai-demo.sqlite` por defecto), cookie heredada `webai_v2_demo_session` y variable `V2_DEMO_DB_PATH`. **Ignora `V2_DB_PATH`** para no abrir una base privada; se rechaza mezclar las bases o cambiar una base privada al modo demo. El parámetro `demoRole` no autentica ni cambia permisos en el modo normal.
+
+**No introduzcas datos reales ni secretos:** cualquiera puede acceder a esta demo compartida. SMTP, las invitaciones y las cuentas reales están desactivados. El acceso de la demo a servidores de modelos está bloqueado por defecto; solo el operador puede autorizarlo con `V2_DEMO_AI_ENABLED=true`, exclusivamente para modelos locales sin claves y con límites compartidos. Las conexiones privadas y claves de pago pertenecen al modo normal.
+
+### Aplicación normal
+
+En otra terminal, desde `v2/`:
+
+```sh
+npm start
+```
+
+Abre **http://localhost:3002** (vista previa **Northstar v2 · Aplicación normal**, puerto **3002**). Mantiene el inicio de sesión privado, utiliza la nueva cookie `webai_v2_private_session` e ignora las cookies de demos antiguas. Tras actualizar, los usuarios privados deben iniciar sesión de nuevo una vez. No admite el acceso automático de demo. En una base nueva requiere configurar el administrador inicial como se explica abajo. No importa usuarios ni datos de la demo. Las bases antiguas de pruebas (`webai-v2.sqlite`, `preview-*.sqlite`) se conservan, pero no se abren automáticamente. Si ya tenías una base privada real, indícala explícitamente con `V2_DB_PATH`, nunca con la variable de demo.
+
+`npm start` fuerza modo normal y `npm run demo` fuerza modo demo, incluso si se heredó otro valor de `DEMO_MODE`. Cada uno admite `PORT` como override explícito; usa puertos diferentes si los ejecutas a la vez.
+
+### Desarrollo con Vite
+
+- `npm run dev`: web normal **5174**, API **3002**.
+- `npm run dev:demo`: demo **5175**, API **3003**. Los archivos de datos, SQLite y secretos no se vigilan. Para una vista estable sin el cliente de desarrollo ni sus reconexiones HMR, usa `npm run build` y `npm run demo` en **3003**.
+
+El lanzador espera a que la API responda en el modo correcto antes de anunciar la URL de Vite. Vite reenvía `/api` al backend correspondiente **sin cambiar el Host público** (`changeOrigin: false`), para que las cookies HTTPS de la vista previa mantengan `SameSite=None; Secure; Partitioned` también a través del proxy; el navegador nunca llama a un `localhost` remoto. No se cargan archivos `.env` automáticamente.
+
+### Persistencia del acceso
+
+La aplicación normal usa por defecto una cookie **HttpOnly** y sesiones SQLite, con caducidad de ocho horas. Tras entrar, crear el administrador o aceptar una invitación se comprueba `/api/auth/me` antes de mostrar datos. El servidor reconoce también HTTPS y el dominio público reenviados por proxies, aunque estos sustituyan Host. En producción debe usarse HTTPS.
+
+Si la vista previa no conserva cookies, el formulario ofrece **Entrar sin cookies (sesión temporal)** y **Abrir la aplicación en una pestaña propia**. La primera opción es explícita: vuelve a validar correo y contraseña, crea una sesión ligada al transporte temporal y envía su identificador por `X-Webai-Session`. El identificador **solo vive en memoria**, también durante HMR; jamás se guarda en localStorage/sessionStorage ni en URLs. **Al recargar o cerrar la página hay que entrar de nuevo** en este modo. La interfaz lo avisa permanentemente. No se degrada automáticamente una sesión HttpOnly a una sesión accesible por JavaScript.
+
+Las sesiones temporales exigen las mismas credenciales, permisos y aislamiento de empresa. Un token de cookie no sirve como sesión temporal, ni al revés; `Authorization: Bearer` sigue sin autenticar usuarios normales. La API devuelve el token temporal únicamente tras un login válido que solicita ese transporte, no en el login predeterminado, bootstrap, invitaciones o `/auth/me`. Caducidad, desactivación y logout revocan estas sesiones igual que las cookies.
+
+Las respuestas de autenticación no se cachean. Los 401 tardíos no borran cookies de un login posterior; el logout explícito sí revoca la sesión y elimina la cookie. La migración conserva las sesiones antiguas como transporte cookie y no elimina cuentas ni datos.
+
+## Crear un espacio limpio
+
+En una terminal POSIX, desde `v2/`:
+
+```sh
+export DEMO_MODE=false
+export V2_DB_PATH="./data/mi-espacio-v2.sqlite"
+export APP_BASE_URL="http://localhost:5174"
+npm run dev
+```
+
+En el **primer arranque normal**, si la base aún no tiene usuarios, el servidor genera un `BOOTSTRAP_TOKEN` aleatorio de 256 bits y lo imprime en la misma consola:
+
+```text
+[Web]   ➜  Local: http://localhost:5174/
+[Token] ---> <token de letras y números generado por el servidor>
+```
+
+Copia el valor que sigue a `[Token] --->` y pégalo en el formulario del primer administrador, en la misma página. No hay enlaces privados, reservas del primer visitante, carga automática por HTTP ni redirecciones. El servidor no entrega el token en `/api/setup/status` ni en `/api/setup/claim`; la antigua variable `V2_SETUP_AUTO_TOKEN` ya no permite publicarlo. El primer visitante sin acceso a tu consola no puede crear el administrador.
+
+**El token solo se imprime en la versión normal y mientras no exista ningún usuario.** La demo no lo genera ni lo imprime. Al completar el alta se invalida; los siguientes arranques muestran el acceso normal sin token. Si reinicias antes de terminar, se conserva en `<ruta-de-la-base>.bootstrap-token.local`, con permisos `0600` e ignorado por Git, y se vuelve a imprimir el mismo valor. Se elimina al completar el alta. Cualquier archivo de enlace de una versión anterior se elimina al consumir el token, pero no se crean nuevos enlaces.
+
+También puedes proporcionar `BOOTSTRAP_TOKEN` desde tu gestor de secretos (al menos 32 caracteres). Tiene prioridad sobre la generación automática y se muestra en la consola con el mismo formato. Un valor explícito demasiado corto detiene el arranque. La carpeta de la base debe ser escribible por el usuario del servidor.
+
+**La salida de la consola contiene ahora una credencial de instalación, a petición del operador.** No publiques capturas de esa línea ni compartas los logs antes del alta. Copia el token a tu gestor de contraseñas si lo necesitas; el portapapeles no es un almacén seguro. Los usuarios de la versión original **no se importan automáticamente**.
+
+No se cargan archivos `.env` automáticamente. Configura las variables en la terminal o en tu plataforma de despliegue.
+
+## Conectar IA local o de nube · fast setup
+
+**Solo el admin configura una conexión compartida y todos los usuarios del workspace usan ese mismo proveedor y modelo.** Si todavía no tienes modelos, sigue la [guía de instalación local con Ollama o LM Studio](LOCAL_AI.md).
+
+1. Entra como **administrador**. En la aplicación normal usa tu administrador. La demo entra automáticamente con un administrador de prueba y no admite claves privadas.
+2. Abre **Configuración → Fast setup · IA real**.
+3. Elige **Ollama · local**, **LM Studio · local** u **Otro servidor compatible con OpenAI**. En local normalmente no necesitas clave: indica la URL `/v1` de un servidor de modelos ya instalado y en marcha. También se conservan OpenAI, Groq y OpenRouter como opciones de nube con clave API. No compartas secretos en chats, capturas ni en el repositorio.
+4. Pulsa **Consultar modelos** para elegir uno instalado/disponible o escribe su identificador. Ollama propone `qwen2.5:3b`; LM Studio necesita el identificador del modelo que hayas cargado. Los catálogos pueden contener modelos que no sean de chat: la prueba verificará la compatibilidad del elegido. La disponibilidad depende de tu cuenta y puede cambiar.
+5. Decide si autorizas que los usuarios compartan contexto operativo. Por defecto está desactivado.
+6. Pulsa **Probar y activar**. El servidor envía una consulta mínima real al proveedor, sin datos de trabajo, y **solo guarda la configuración si responde correctamente**. En local necesitas tener el motor y un modelo cargados; no necesitas una cuenta de OpenAI. En nube necesitas una cuenta con saldo/cuota y la prueba puede tener coste.
+7. Abre el **Asistente del workspace** y selecciona **IA local** o **IA real**, según la conexión compartida. El modo de reglas sigue disponible sin proveedor. La pregunta siempre se enviará al proveedor al usar IA; el contexto solo se adjunta si está autorizado y marcas expresamente su casilla.
+
+### Seguridad y privacidad de IA
+
+- Las peticiones salen del servidor Express a la API local `/v1` o a los destinos fijos de nube. El navegador llama únicamente a `/api/ai/...`. Se bloquean redirecciones y destinos arbitrarios: otros puertos, redes privadas y contenedores requieren `V2_AI_ALLOWED_ORIGINS`, autorizado por el operador. Consulta [LOCAL_AI.md](LOCAL_AI.md).
+- La clave API se introduce en un campo de contraseña y viaja al servidor. No se guarda en localStorage ni vuelve en las respuestas de la API. Se cifra con **AES-256-GCM**, asociado al tenant, antes de persistirla en SQLite.
+- Si guardas un token o clave se crea por defecto `v2/data/ai-master.key`, de 32 bytes, con permisos `0600`. Persiste y respalda ese archivo **separadamente de SQLite**: perderlo impide descifrar las claves. `v2/data/` está excluido de Git.
+- En producción puedes proporcionar `V2_AI_ENCRYPTION_KEY`, con 64 caracteres hexadecimales, desde tu gestor de secretos. Mantén el mismo valor al reiniciar. No cambies de clave/archivo sin un plan de recifrado o de reconfiguración; no hay rotación automática.
+- Con contexto, **sin herramientas**, se envía una muestra de **hasta 25 proyectos, 25 tareas y 25 incidencias**, con textos recortados a 200 caracteres. Se excluyen responsables, correos, descripciones, reuniones, notas, invitaciones y sesiones. Los títulos pueden contener información sensible: revisa el uso permitido y las políticas del proveedor antes de autorizarlo.
+- El historial **sí se guarda ahora**: últimos 40 turnos completados por usuario/empresa en SQLite privado, sin cifrado adicional del texto. La demo usa solo sessionStorage de cada pestaña, nunca un historial común de visitantes. El proveedor puede procesar/retener lo que envíes según sus condiciones. No escribas claves ni contraseñas. Puedes borrar tu historial sin borrar registros de trabajo ni auditoría; las copias de seguridad tienen su propia retención.
+- Las reglas siguen siendo de solo lectura. En la aplicación privada la IA puede **proponer** altas y modificaciones de tareas, proyectos, incidencias, reuniones y eventos, según tu rol. Cada propuesta exige confirmar los campos exactos; no hay borrados, SQL libre ni acciones externas. Se verifican de nuevo permisos y referencias al confirmar; las propuestas caducan a los 10 minutos y detectan registros modificados entretanto. Véase [ASSISTANT.md](ASSISTANT.md).
+- El historial visible no se reenvía automáticamente. Para enviar hasta 8 turnos anteriores (12.000 caracteres JSON), el administrador debe autorizar contexto y el usuario marcar **Enviar últimos mensajes**. El contexto con herramientas incluye además IDs y nombres de responsables activos, reuniones y eventos; se excluyen notas y correos. Mantiene el límite de 25 filas por tipo y 12.000 caracteres JSON.
+- Dictado y lectura usan las APIs del navegador, con inicio explícito y alternativas por texto. Pueden utilizar servicios en línea del navegador, **aunque la IA sea local**. Requieren compatibilidad, HTTPS y permisos; un iframe puede impedir el micrófono. Dictar no envía la pregunta ni confirma cambios automáticamente.
+- Hay un límite persistido de **20 llamadas por usuario/empresa por minuto**, un timeout de 120 segundos en local o 25 segundos en nube y un máximo de 800 tokens de salida solicitados al proveedor. Los límites de gasto globales deben configurarse también en el proveedor.
+- **Desconectar** elimina la clave cifrada de la configuración activa de este espacio, no las claves de otras empresas. Las copias de seguridad existentes no se borran automáticamente.
+
+### Estado de las pruebas de conectividad
+
+La integración hace llamadas HTTP reales a las APIs compatibles; no es una simulación en producción. Las pruebas automáticas usan respuestas controladas y un servidor HTTP local de prueba; no gastan créditos ni ejecutan un LLM real. **No se ha instalado un motor de modelos en Arena, y las conexiones salientes a los proveedores de nube están bloqueadas en esta sesión.** Para usar IA local, ejecuta Ollama o LM Studio junto a la aplicación, o autoriza un servidor de modelos accesible. Para nube necesitas salida HTTPS al proveedor y tu propia clave. Si la red o la clave fallan, la interfaz muestra el error y no simula una respuesta de IA ni cambia de modo silenciosamente.
+
+## Cambios implementados
+
+### 1. Pruebas automáticas
+
+```sh
+npm test
+npm run lint
+npm run build
+```
+
+Las pruebas usan bases temporales y no tocan ni la demo ni los datos de la versión original. Cubren:
+
+- Bootstrap de un solo uso, acceso y cierre de sesión.
+- Permisos de administrador, gestor, miembro y lector.
+- Separación de base/cookie/puerto de la demo, entrada y renovación sin cookies, rechazo del acceso demo en la web privada y restricciones de claves.
+- Retorno al login cuando caduca una sesión privada y protección frente a renovaciones tardías tras salir.
+- Aislamiento entre empresas, incluida la asignación de proyectos a tareas al crear y actualizar.
+- Invitaciones de un solo uso, revocadas y caducadas.
+- Persistencia, caducidad, almacenamiento hasheado y revocación de sesiones.
+- Paginación, filtros y búsqueda aislada por empresa.
+- Fechas locales, cambio de año y cambio de hora.
+- Respuestas del asistente en español y ausencia de modificaciones de datos.
+- Conectividad de los proveedores locales y de nube con respuestas controladas, servidor HTTP local de prueba y migración de configuraciones anteriores: cifrado, permisos, aislamiento, consentimiento, límites y errores sin filtrado de secretos.
+
+### 2. Sesiones persistentes
+
+Las sesiones privadas se guardan en SQLite, no en un `Map`. Sobreviven a reinicios, caducan a las ocho horas y se revocan al cerrar sesión o desactivar la cuenta. Solo se guarda el hash SHA-256 del token de la cookie. La cookie privada mantiene `HttpOnly`, `SameSite=Strict` y `Secure` con `NODE_ENV=production`. En hosts de vista previa `*.e2b.app` usa `Secure; SameSite=None; Partitioned` para permitir el iframe sin compartir la cookie entre sitios. La caducidad durante el uso devuelve al formulario de acceso, no deja el panel bloqueado con un aviso. La sesión de prueba en memoria está restringida al servidor demo.
+
+Varias instancias que abran **el mismo archivo SQLite local** ven las mismas sesiones. Esto no equivale a un almacén distribuido: para despliegues en varias máquinas, incorpora Redis u otro almacén compartido adecuado.
+
+### 3. Código dividido por responsabilidad
+
+```text
+src/
+  App.jsx              # Composición, navegación y acciones
+  pages/               # Una pantalla por archivo
+  components/          # Formularios, acceso y componentes reutilizables
+  hooks/               # Reloj, carga por pantalla y búsqueda
+  lib/                 # API, fechas, traducciones y asistente de reglas
+server/
+  index.js             # Arranque del servidor
+  app.js               # API operativa y composición de rutas
+  auth.js              # Bootstrap, autenticación y aceptación de invitaciones
+  database.js          # Esquema, compatibilidad y datos de demostración
+  sessions.js          # Almacén persistente de sesiones
+  resources.js         # Configuración, roles y conversión de recursos
+  pagination.js        # Validación de paginación
+  ai.js                # Conexión compartida, cifrado y contexto con consentimiento
+  ai-providers.js      # Perfiles OpenAI-compatible y destinos autorizados
+```
+
+### 4. Español y fechas actualizadas
+
+La interfaz utiliza el catálogo central `src/lib/i18n.js`. Las traducciones de estados y roles son de presentación: los valores estables de la API no cambian. Los nombres y textos introducidos por el usuario no se traducen automáticamente.
+
+El navegador calcula fechas por día local y actualiza el reloj cada 30 segundos y al recuperar visibilidad. El calendario convierte las horas de reuniones y eventos al día local, sin confundirlas con fechas UTC. Las fechas sin hora de las tareas conservan su día original.
+
+El servidor usa `V2_TIME_ZONE`, o `TZ` si ya existe; si no se configura ninguna, utiliza `Europe/Madrid`. Ajusta `V2_TIME_ZONE` al calendario operativo de tu empresa.
+
+### 5. Asistente con IA real o reglas locales
+
+El usuario elige explícitamente entre reglas deterministas y un proveedor de IA real. Cada respuesta identifica su origen; una respuesta de reglas nunca se presenta como generativa. Los errores del proveedor se comunican sin sustituir silenciosamente la respuesta. Consulta el fast setup anterior para conectar el proveedor.
+
+### 6. Carga por pantalla, paginación y búsqueda
+
+El inicio solicita un resumen acotado, no todas las colecciones. Los listados principales usan páginas de 20 registros, con filtros de estado aplicados en el servidor y orden estable. La API admite `page` y `pageSize`, con un máximo de 100 registros por respuesta:
+
+```text
+GET /api/tasks?page=2&pageSize=20&status=Done
+→ { items, page, pageSize, total, totalPages }
+```
+
+La búsqueda usa `/api/search?q=...`, con un máximo de seis resultados y aislamiento por empresa, sin depender de las páginas cargadas. Las solicitudes obsoletas se cancelan al cambiar de pantalla o consulta.
+
+Los informes, el calendario, el asistente y algunas relaciones necesitan el conjunto completo de sus recursos: lo recorren mediante peticiones paginadas solo al abrir esas pantallas. **Todavía agregan datos en el navegador**; para grandes volúmenes, el siguiente paso son agregaciones y exportaciones en el servidor. Los informes indican «Todos los registros», no un periodo de 30 días que no se estaba aplicando. El CSV protege los prefijos de fórmulas en las celdas.
+
+## Invitaciones por correo
+
+Se conserva el envío SMTP opcional de la versión original. Define:
+
+```sh
+export APP_BASE_URL="https://tu-v2.example.com"
+export SMTP_HOST="smtp.example.com"
+export SMTP_PORT="587"
+export SMTP_SECURE="false"
+export SMTP_USER="mailer@example.com"
+export SMTP_PASSWORD="<secreto-del-proveedor>"
+export SMTP_FROM="Northstar Work <mailer@example.com>"
+```
+
+`APP_BASE_URL` debe ser la URL **pública de esta v2**, también al usar la vista previa de Arena. El valor de desarrollo por defecto es `http://localhost:5174`; no sirve como enlace para personas que acceden a una vista previa remota. Reinicia el servidor después de cambiar variables. Si no se envía el correo, un administrador puede copiar el enlace y compartirlo por un canal seguro.
+
+## Producción
+
+```sh
+cd v2
+npm ci
+NODE_ENV=production npm run build
+NODE_ENV=production APP_BASE_URL="https://tu-v2.example.com" V2_REQUEST_LOGS=true PORT=3002 npm start
+```
+
+Express sirve la interfaz compilada y `/api` desde el mismo origen. Configura HTTPS, `APP_BASE_URL`, un volumen persistente para `v2/data/` o `V2_DB_PATH` (la demo utiliza `V2_DEMO_DB_PATH`), y las variables SMTP si corresponde. Las llamadas del navegador usan rutas relativas, nunca un `localhost` de otro servicio.
+
+La v2 dispone de integraciones OAuth **manuales** de calendario, Slack y Teams y de IA compartida administrada. No hay sincronización ni ejecución de reglas en segundo plano. Se han incorporado límites persistentes en SQLite, controles CSRF, aislamiento probado, protección de archivos privados y una herramienta de copia verificada. No hay migración automática desde v1, recuperación de contraseña autoservicio, MFA ni límites de concurrencia distribuidos. Antes de datos reales, completa las condiciones operativas y de seguridad de la [auditoría de producción](PRODUCTION_READINESS.md).
+
+## Calendario, correo y mensajería con OAuth
+
+La aplicación normal permite configurar **Google Calendar, Microsoft Outlook, Slack y Microsoft Teams** desde **Configuración → Servicios conectados**. Solo los administradores conectan cuentas y ejecutan operaciones externas; la demo pública rechaza secretos y conexiones reales.
+
+Incluye OAuth con estado de un solo uso, PKCE donde está soportado, tokens cifrados, renovación, desconexión y operaciones manuales reales. Para activarlas hay que registrar una aplicación en cada proveedor, definir `APP_BASE_URL` e introducir Client ID y Client secret en el formulario privado. No hay credenciales preinstaladas.
+
+**Guía de permisos, callbacks, seguridad, despliegue y límites: [OAUTH.md](OAUTH.md).** La conexión requiere acceso saliente del servidor a los proveedores; las pruebas con proveedores simulados no verifican tus credenciales ni el consentimiento de tu organización.
+
+
+## Endurecimiento y operación
+
+Consulta [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) para hallazgos por gravedad, resultados reales, variables, instalación, límites y veredicto. Node **>=22.12**, Python 3, compilador C/C++ y cabeceras de Node compatibles para `better-sqlite3`.
+
+- Usa `.env.example` solo como plantilla **sin secretos**. Node no carga `.env` automáticamente: expórtalo desde el shell o desde tu gestor de procesos/secretos.
+- **No publiques Vite en producción.** Solo `dist/` servido por Express detrás de HTTPS; nunca `data/`, el repositorio completo ni `node_modules/`.
+- Una vulnerabilidad crítica de la vista de desarrollo permitía descargar archivos privados antes de esta corrección (reproducida con un archivo sintético, no con tus secretos). Las rutas están bloqueadas y cubiertas por pruebas. Si hubo usuarios o secretos reales en una vista Vite pública, deben revisarse accesos y rotarse antes de producción; esta tarea no ha modificado tus credenciales.
+- Las mutaciones `/api` requieren `Content-Type: application/json`, incluso comandos sin cuerpo. No se permite CORS abierto; el frontend utiliza `/api` de mismo origen. Las llamadas de otro origen se rechazan.
+- Configura proxies por IP/CIDR con `V2_TRUSTED_PROXIES`, solo tras asegurar que sustituyen los encabezados reenviados. Sin ello, los límites por IP se agregan en la IP del gateway. `APP_BASE_URL` es obligatorio en producción; `V2_ALLOWED_WEB_ORIGINS` autoriza orígenes web adicionales exactos, no habilita CORS.
+- `GET /api/health/live` indica proceso vivo; `/api/health/ready` comprueba acceso básico a SQLite, no disponibilidad de IA/OAuth/SMTP ni integridad completa.
+- `npm run backup -- /ruta/privada/nueva.sqlite` crea una copia online consistente de SQLite, comprueba integridad y **no sobrescribe** destinos existentes. Incluye las claves maestras por separado en tu plan de recuperación. La copia no está cifrada por la herramienta: usa almacenamiento cifrado y privado. Haz un simulacro aislado antes de depender de ella.
+- En producción, CSP limita scripts/conexiones al propio origen y bloquea iframes de otros sitios. La vista de desarrollo de Arena sigue siendo embebible. SIGTERM/SIGINT dan hasta 30 s de drenaje; una inferencia en curso puede interrumpirse sin garantizar que el proveedor no la cobre.
