@@ -760,13 +760,18 @@ function App() {
             />
           )}
 
-          {page === 'assistant' && (
+          <div hidden={page !== 'assistant'}>
             <AssistantPage
+              visible={page === 'assistant'}
+              key={`${user.id}:${setupStatus?.demoMode ? 'demo' : 'private'}`}
+              user={user}
+              demoMode={setupStatus?.demoMode}
+              onChange={loadWorkspace}
               onSetup={() => setPage('settings')}
               workspace={workspace}
               onCreate={() => setModal('tasks')}
             />
-          )}
+          </div>
 
           {page === 'reports' && <ReportsPage workspace={workspace} />}
 

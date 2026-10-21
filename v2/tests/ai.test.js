@@ -476,3 +476,43 @@ test('IA: timeout real durante lectura HTTP lenta, sin guardar configuración ni
     assert.equal((await f.request('/config')).body.configured, false)
   } finally { upstream.closeAllConnections(); await new Promise((resolve) => upstream.close(resolve)); await f.close() }
 })
+
+test('historial: compartirlo requiere autorización administrativa vigente y consentimiento explícito', async () => {
+  const f = await fixture()
+  try {
+    await f.activate()
+    assert.equal((await f.request('/ask', { method: 'POST', body: { mode: 'rules', question: 'tareas' } })).status, 200)
+    const calls = f.calls.length
+    assert.equal((await f.request('/ask', { method: 'POST', body: { mode: 'ai', question: 'continúa', includeContext: false, includeHistory: true } })).status, 403)
+    assert.equal(f.calls.length, calls)
+    assert.equal((await f.activate({ allowContext: true })).status, 200)
+    const reply = await f.request('/ask', { method: 'POST', body: { mode: 'ai', question: 'continúa', includeContext: false, includeHistory: true } })
+    assert.equal(reply.status, 200)
+    assert.ok(JSON.parse(f.calls.at(-1).options.body).messages.some((message) => message.role === 'user' && message.content === 'tareas'))
+    assert.equal((await f.request('/conversation', { tenant: 'b' })).body.turns.length, 0)
+  } finally { await f.close() }
+})
+
+test('demo: historial efímero sin conversaciones compartidas en SQLite ni herramientas de escritura', async () => {
+  const f = await fixture({ demoMode: true })
+  try {
+    const result = await f.request('/ask', { method: 'POST', body: { question: 'Pregunta demo privada del visitante', mode: 'rules' } })
+    assert.equal(result.status, 200)
+    assert.equal(typeof result.body.id, 'string')
+    assert.deepEqual((await f.request('/conversation')).body, { turns: [], ephemeral: true })
+    assert.equal(f.db.prepare('SELECT count(*) AS n FROM ai_conversations').get().n, 0)
+    assert.equal((await f.request('/ask', { method: 'POST', body: { question: 'cambia una tarea', mode: 'ai', includeContext: true, allowTools: true } })).status, 403)
+    assert.equal(f.calls.length, 0)
+  } finally { await f.close() }
+})
+
+test('historial: conserva la respuesta saneada, nunca la clave exacta repetida por el proveedor', async () => {
+  const f = await fixture()
+  try {
+    await f.activate()
+    f.setBehavior(async () => new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'El proveedor repite fake-unit-test-key' } }] })))
+    assert.equal((await f.request('/ask', { method: 'POST', body: { question: 'hola', mode: 'ai', includeContext: false } })).status, 200)
+    assert.doesNotMatch(JSON.stringify((await f.request('/conversation')).body), /fake-unit-test-key/)
+    assert.doesNotMatch(f.db.prepare('SELECT response_json FROM ai_conversations').get().response_json, /fake-unit-test-key/)
+  } finally { await f.close() }
+})

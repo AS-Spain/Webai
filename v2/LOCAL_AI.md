@@ -100,3 +100,12 @@ No expongas Ollama o LM Studio sin autenticación a Internet. Para otro equipo u
 - Cambiar/desconectar configuración o revocar al admin mientras se prueba impide guardar una conexión obsoleta; una petición ya enviada no se puede des-enviar.
 - `V2_AI_ALLOWED_ORIGINS` se valida al arrancar: sin rutas, comodines, credenciales ni metadatos/link-local/multicast literales. Se permiten redes privadas elegidas explícitamente para tus motores; eso no es una prohibición de toda IP privada. Usa IPs estáticas o DNS interno controlado y un firewall de salida. No hay pinning DNS/transporte personalizado para orígenes autorizados: no autorices dominios controlados por terceros o DNS mutable no confiable.
 - **Demo pública:** no hay llamadas a modelos por defecto, incluso aunque selecciones el perfil de ejemplo admin. El operador puede optar expresamente por `V2_DEMO_AI_ENABLED=true` con un motor desechable sin claves y presupuesto de recursos. No lo actives contra modelos o redes sensibles. Los roles de demo son públicos, no credenciales de operador.
+
+
+## Conversaciones, herramientas y voz
+
+Consulta [ASSISTANT.md](ASSISTANT.md). El historial privado persiste por usuario y empresa; reenviarlo al modelo exige autorización administrativa de contexto y una casilla explícita del usuario. Las herramientas requieren además el contexto operativo y un modelo con llamadas de función OpenAI (`tools` / `tool_calls`). No se aceptan comandos de escritura en texto libre. Un modelo sin esa capacidad puede responder texto pero no generar una propuesta ejecutable.
+
+Las definiciones de las herramientas añaden entrada al prompt, además de las muestras de contexto y del historial. Usa una ventana de contexto suficiente en el motor, desactiva historial si es necesario y acota la consulta. La aplicación no instala modelos ni modifica su ventana automáticamente. Una propuesta no es ejecución: solo **Confirmar y aplicar** escribe en el espacio privado. La demo pública no admite estas herramientas aunque el operador autorice inferencia.
+
+La voz usa servicios del navegador, no el servidor Ollama/LM Studio. El dictado y algunas voces pueden procesarse en línea; no prometemos voz local. Se detienen al salir del asistente u ocultar la pestaña. La entrada por texto sigue disponible.

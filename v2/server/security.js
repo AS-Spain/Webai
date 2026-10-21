@@ -33,7 +33,7 @@ export function installSecurity(app, { db, runtime, log = (entry) => console.log
     res.setHeader('X-Request-ID', req.requestId)
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'same-origin')
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()')
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=(), payment=()')
     if (runtime.production) {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000')
       res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'")

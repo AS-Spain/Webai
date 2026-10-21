@@ -1,7 +1,7 @@
 import express from 'express'
 import nodemailer from 'nodemailer'
 import { privateFilePolicy } from './private-files.js'
-import { validateResource, validateReferences } from './validation.js'
+import { workspaceMutations } from './mutations.js'
 import { installSecurity, apiErrors, HttpError } from './security.js'
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -64,7 +64,8 @@ app.get('/api/auth/me', authenticate, (req, res) => {
 registerIntegrationRoutes(app, { db, authenticate, demoMode, keyPath: path.join(path.dirname(runtime.keyPath), demoMode ? 'integrations-demo-master.key' : 'integrations-master.key'), recordActivity })
 
 app.use('/api', authenticate)
-registerAiRoutes(app, { db, day, recordActivity, demoMode, allowedOrigins: runtime.aiAllowedOrigins, demoAiEnabled: runtime.demoAiEnabled, canConfigure: (req) => {
+const mutateWorkspace = workspaceMutations(db, recordActivity)
+registerAiRoutes(app, { db, day, recordActivity, mutateWorkspace, demoMode, allowedOrigins: runtime.aiAllowedOrigins, demoAiEnabled: runtime.demoAiEnabled, canRespond: (req) => demoMode || Boolean(req.authenticatedSessionId && sessions.get(req.authenticatedSessionId)), canConfigure: (req) => {
   if (demoMode) return true // Network access still requires the operator's explicit demo opt-in.
   const user = db.prepare("SELECT id FROM users WHERE id = ? AND tenant_id = ? AND role = 'admin' AND status = 'active'").get(req.user.id, req.tenantId)
   return Boolean(user && req.authenticatedSessionId && sessions.get(req.authenticatedSessionId))
@@ -253,32 +254,11 @@ for (const [resource, config] of Object.entries(resourceConfig)) {
   })
 
   app.post(`/api/${resource}`, authorizeResource(resource, 'create'), (req, res) => {
-    const values = validateResource(resource, req.body)
-    validateReferences(db, req.tenantId, resource, values)
-
-    const id = randomUUID()
-    const fields = ['id', 'tenant_id', ...Object.keys(values), 'created_at']
-    const insertValues = [id, req.tenantId, ...Object.values(values), new Date().toISOString()]
-    db.transaction(() => {
-      db.prepare(`INSERT INTO ${resource} (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`).run(...insertValues)
-      recordActivity(req.user, 'created', resource, id, `Creó ${resource === 'issues' ? 'una incidencia' : resource === 'tasks' ? 'una tarea' : resource === 'meetings' ? 'una reunión' : resource === 'events' ? 'un evento' : 'un proyecto'}: ${values.title || values.name}`, '', { after: values })
-    })()
-    res.status(201).json(parseRow(resource, db.prepare(`SELECT * FROM ${resource} WHERE id = ? AND tenant_id = ?`).get(id, req.tenantId)))
+    res.status(201).json(mutateWorkspace(req.user, resource, 'create', req.body))
   })
 
   app.patch(`/api/${resource}/:id`, authorizeResource(resource, 'update'), (req, res) => {
-    const current = db.prepare(`SELECT * FROM ${resource} WHERE id = ? AND tenant_id = ?`).get(req.params.id, req.tenantId)
-    if (!current) return res.status(404).json({ error: 'Registro no encontrado.' })
-    const values = validateResource(resource, req.body, { partial: true })
-    validateReferences(db, req.tenantId, resource, values)
-    const changes = Object.entries(values)
-    db.transaction(() => {
-      db.prepare(`UPDATE ${resource} SET ${changes.map(([field]) => `${field} = ?`).join(', ')} WHERE id = ? AND tenant_id = ?`).run(...changes.map(([, value]) => value), req.params.id, req.tenantId)
-      const label = values.title || values.name || current.title || current.name
-      const changedStatus = values.status && values.status !== current.status ? ` (estado: ${current.status} → ${values.status})` : ''
-      recordActivity(req.user, 'updated', resource, req.params.id, `Actualizó ${label}${changedStatus}`, String(req.body?.reason || ''), { before: current, after: { ...current, ...values } })
-    })()
-    res.json(parseRow(resource, db.prepare(`SELECT * FROM ${resource} WHERE id = ? AND tenant_id = ?`).get(req.params.id, req.tenantId)))
+    res.json(mutateWorkspace(req.user, resource, 'update', req.body, req.params.id))
   })
 
   app.delete(`/api/${resource}/:id`, authorizeResource(resource, 'delete'), (req, res) => {
